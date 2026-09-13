@@ -8,8 +8,6 @@ class ShellcheckLegibility < Formula
   license "MIT"
   head "https://github.com/yowainwright/shellcheck_legibility.git", branch: "main"
 
-  depends_on "bash"
-
   def install
     libexec.install "bin", "lib"
     bin.write_exec_script libexec/"bin/shellcheck-legibility"

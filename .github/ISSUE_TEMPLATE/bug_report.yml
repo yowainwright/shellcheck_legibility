@@ -32,7 +32,7 @@ body:
     attributes:
       label: Versions
       description: Include shellcheck-legibility, Bash, ShellCheck, and OS versions.
-      placeholder: "shellcheck-legibility 0.2.1, bash 5.3, ShellCheck 0.10.0, macOS"
+      placeholder: "shellcheck-legibility <version>, bash <version>, ShellCheck <version>, macOS"
     validations:
       required: true
   - type: textarea

@@ -33,16 +33,19 @@ shell_rule_name() {
 
 rule_enabled() {
   local code="${1:-}"
-  selector_matches_any "$code" SELECT || return 1
+  [[ "${#SELECT[@]}" -gt 0 ]] || return 1
+  selector_matches_any "$code" "${SELECT[@]}" || return 1
   comment_rule_selected "$code" || return 1
-  selector_matches_any "$code" IGNORE && return 1
+  if [[ "${#IGNORE[@]}" -gt 0 ]]; then
+    selector_matches_any "$code" "${IGNORE[@]}" && return 1
+  fi
   return 0
 }
 
 comment_rule_selected() {
   local code="${1:-}"
   comment_rule_code "$code" || return 0
-  selector_explicitly_matches_any "$code" SELECT
+  selector_explicitly_matches_any "$code" "${SELECT[@]}"
 }
 
 comment_rule_code() {
@@ -54,10 +57,10 @@ comment_rule_code() {
 
 selector_explicitly_matches_any() {
   local code="${1:-}"
-  local array_name="${2:-}"
   local selector
-  local -n selectors_ref="$array_name"
-  for selector in "${selectors_ref[@]}"; do
+  shift
+  [[ "$#" -gt 0 ]] || return 1
+  for selector in "$@"; do
     selector_explicitly_matches "$code" "$selector" && return 0
   done
   return 1
@@ -73,11 +76,10 @@ selector_explicitly_matches() {
 
 selector_matches_any() {
   local code="${1:-}"
-  local array_name="${2:-}"
   local selector
-  local -n selectors_ref="$array_name"
-  [[ "${#selectors_ref[@]}" -eq 0 ]] && return 1
-  for selector in "${selectors_ref[@]}"; do
+  shift
+  [[ "$#" -gt 0 ]] || return 1
+  for selector in "$@"; do
     selector_matches "$code" "$selector" && return 0
   done
   return 1

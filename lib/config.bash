@@ -59,13 +59,11 @@ read_config_lines() {
   local path="${1:-}"
   local in_section="${2:-}"
   local line
-  local -a lines
   reset_pending_config_values
-  mapfile -t lines < "$path"
-  for line in "${lines[@]}"; do
+  while IFS= read -r line || [[ -n "$line" ]]; do
     process_config_line "$line" "$in_section"
     in_section="$CONFIG_IN_SECTION"
-  done
+  done < "$path"
   apply_pending_config_values
 }
 
@@ -143,25 +141,31 @@ open_config_value_list() {
 }
 
 apply_pending_config_values() {
-  local array_name
   [[ -n "$CONFIG_PENDING_KEY" ]] || return
-  array_name="$(config_array_name "$CONFIG_PENDING_KEY")"
-  replace_config_array "$array_name" "${CONFIG_PENDING_VALUES[@]}"
+  if [[ "${#CONFIG_PENDING_VALUES[@]}" -eq 0 ]]; then
+    replace_config_array "$CONFIG_PENDING_KEY"
+  else
+    replace_config_array "$CONFIG_PENDING_KEY" "${CONFIG_PENDING_VALUES[@]}"
+  fi
   reset_pending_config_values
 }
 
-config_array_name() {
-  local key="${1:-}"
-  config_array_key "$key" || return 1
-  key="${key//-/_}"
-  printf '%s\n' "${key^^}"
-}
-
 replace_config_array() {
-  local array_name="${1:-}"
+  local key="${1:-}"
   shift
-  local -n target_ref="$array_name"
-  target_ref=("$@")
+  case "$key" in
+    select) SELECT=("$@") ;;
+    ignore) IGNORE=("$@") ;;
+    exclude) EXCLUDE=("$@") ;;
+    executable-entry-patterns) EXECUTABLE_ENTRY_PATTERNS=("$@") ;;
+    direct-shell-entry-patterns) DIRECT_SHELL_ENTRY_PATTERNS=("$@") ;;
+    executable-runtimes) EXECUTABLE_RUNTIMES=("$@") ;;
+    comment-matchers) COMMENT_MATCHERS=("$@") ;;
+    comment-prefix-identifiers) COMMENT_PREFIX_IDENTIFIERS=("$@") ;;
+    comment-suffix-identifiers) COMMENT_SUFFIX_IDENTIFIERS=("$@") ;;
+    automated-comment-identifiers) AUTOMATED_COMMENT_IDENTIFIERS=("$@") ;;
+    *) return 1 ;;
+  esac
 }
 
 reset_pending_config_values() {
@@ -276,6 +280,34 @@ apply_comment_config_value() {
 reset_array_from_csv() {
   local array_name="${1:-}"
   local value="${2:-}"
-  eval "$array_name=()"
-  csv_to_array "$array_name" "$value"
+  csv_to_array "$value"
+  if [[ "${#PARSED_LIST[@]}" -eq 0 ]]; then
+    case "$array_name" in
+      SELECT) SELECT=() ;;
+      IGNORE) IGNORE=() ;;
+      EXCLUDE) EXCLUDE=() ;;
+      EXECUTABLE_ENTRY_PATTERNS) EXECUTABLE_ENTRY_PATTERNS=() ;;
+      DIRECT_SHELL_ENTRY_PATTERNS) DIRECT_SHELL_ENTRY_PATTERNS=() ;;
+      EXECUTABLE_RUNTIMES) EXECUTABLE_RUNTIMES=() ;;
+      COMMENT_MATCHERS) COMMENT_MATCHERS=() ;;
+      COMMENT_PREFIX_IDENTIFIERS) COMMENT_PREFIX_IDENTIFIERS=() ;;
+      COMMENT_SUFFIX_IDENTIFIERS) COMMENT_SUFFIX_IDENTIFIERS=() ;;
+      AUTOMATED_COMMENT_IDENTIFIERS) AUTOMATED_COMMENT_IDENTIFIERS=() ;;
+      *) return 1 ;;
+    esac
+    return
+  fi
+  case "$array_name" in
+    SELECT) SELECT=("${PARSED_LIST[@]}") ;;
+    IGNORE) IGNORE=("${PARSED_LIST[@]}") ;;
+    EXCLUDE) EXCLUDE=("${PARSED_LIST[@]}") ;;
+    EXECUTABLE_ENTRY_PATTERNS) EXECUTABLE_ENTRY_PATTERNS=("${PARSED_LIST[@]}") ;;
+    DIRECT_SHELL_ENTRY_PATTERNS) DIRECT_SHELL_ENTRY_PATTERNS=("${PARSED_LIST[@]}") ;;
+    EXECUTABLE_RUNTIMES) EXECUTABLE_RUNTIMES=("${PARSED_LIST[@]}") ;;
+    COMMENT_MATCHERS) COMMENT_MATCHERS=("${PARSED_LIST[@]}") ;;
+    COMMENT_PREFIX_IDENTIFIERS) COMMENT_PREFIX_IDENTIFIERS=("${PARSED_LIST[@]}") ;;
+    COMMENT_SUFFIX_IDENTIFIERS) COMMENT_SUFFIX_IDENTIFIERS=("${PARSED_LIST[@]}") ;;
+    AUTOMATED_COMMENT_IDENTIFIERS) AUTOMATED_COMMENT_IDENTIFIERS=("${PARSED_LIST[@]}") ;;
+    *) return 1 ;;
+  esac
 }

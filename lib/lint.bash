@@ -32,6 +32,7 @@ SHELL_SCAN_ESCAPED="0"
 lint_files() {
   local file
   prepare_comment_rule_state
+  [[ "${#FILES[@]}" -gt 0 ]] || return
   for file in "${FILES[@]}"; do
     lint_file "$file"
   done
@@ -99,12 +100,10 @@ check_file_rules() {
 scan_file_lines() {
   local path="${1:-}"
   local line
-  local -a lines
-  mapfile -t lines < "$path"
-  for line in "${lines[@]}"; do
+  while IFS= read -r line || [[ -n "$line" ]]; do
     SCAN_LINE_NUMBER=$((SCAN_LINE_NUMBER + 1))
     scan_line "$path" "$SCAN_LINE_NUMBER" "$line"
-  done
+  done < "$path"
 }
 
 scan_line() {
@@ -930,7 +929,8 @@ check_prefer_guard_clauses() {
 check_require_executable_shebang() {
   local path="${1:-$SCAN_PATH}"
   local line_number="${2:-1}"
-  path_matches_any "$path" EXECUTABLE_ENTRY_PATTERNS || return
+  [[ "${#EXECUTABLE_ENTRY_PATTERNS[@]}" -gt 0 ]] || return
+  path_matches_any "$path" "${EXECUTABLE_ENTRY_PATTERNS[@]}" || return
   file_has_allowed_shebang "$path" && return
   add_diag "$path" "$line_number" "1" "LEG016" "Executable shell entry file has no accepted shebang."
 }
@@ -1108,12 +1108,13 @@ check_automated_comment_body() {
   local line_number="${2:-}"
   local index="${3:-0}"
   local body="${4:-}"
-  local normalized_body normalized_author
+  local normalized_body normalized_author lower_body
   prepare_automated_comment_identifiers
   (( ${#NORMALIZED_AUTOMATED_COMMENT_IDENTIFIERS[@]} > 0 )) || return
   normalized_body="$(normalize_attribution_text "$body")"
+  lower_body="$(lowercase "$body")"
   normalized_author=""
-  [[ "${body,,}" == *"@author"* ]] && normalized_author="$(normalized_comment_author "$body")"
+  [[ "$lower_body" == *"@author"* ]] && normalized_author="$(normalized_comment_author "$body")"
   automated_comment_identifier "$body" "$normalized_body" "$normalized_author" || return
   report_automated_comment_attribution "$path" "$line_number" "$index" "$AUTOMATED_COMMENT_IDENTIFIER"
 }
@@ -1183,6 +1184,11 @@ automated_comment_identifier() {
 prepare_automated_comment_identifiers() {
   local identifier
   automated_comment_identifier_cache_current && return
+  if [[ "${#AUTOMATED_COMMENT_IDENTIFIERS[@]}" -eq 0 ]]; then
+    CACHED_AUTOMATED_COMMENT_IDENTIFIERS=()
+    NORMALIZED_AUTOMATED_COMMENT_IDENTIFIERS=()
+    return
+  fi
   CACHED_AUTOMATED_COMMENT_IDENTIFIERS=("${AUTOMATED_COMMENT_IDENTIFIERS[@]}")
   NORMALIZED_AUTOMATED_COMMENT_IDENTIFIERS=()
   for identifier in "${AUTOMATED_COMMENT_IDENTIFIERS[@]}"; do
@@ -1194,6 +1200,7 @@ automated_comment_identifier_cache_current() {
   local index
   [[ "${#AUTOMATED_COMMENT_IDENTIFIERS[@]}" -eq "${#CACHED_AUTOMATED_COMMENT_IDENTIFIERS[@]}" ]] || return 1
   [[ "${#AUTOMATED_COMMENT_IDENTIFIERS[@]}" -eq "${#NORMALIZED_AUTOMATED_COMMENT_IDENTIFIERS[@]}" ]] || return 1
+  [[ "${#AUTOMATED_COMMENT_IDENTIFIERS[@]}" -eq 0 ]] && return 0
   for index in "${!AUTOMATED_COMMENT_IDENTIFIERS[@]}"; do
     [[ "${AUTOMATED_COMMENT_IDENTIFIERS[$index]}" == "${CACHED_AUTOMATED_COMMENT_IDENTIFIERS[$index]}" ]] || return 1
   done
@@ -1220,7 +1227,7 @@ comment_author_matches() {
 normalized_comment_author() {
   local body="${1:-}"
   local pattern='(^|[[:space:]])@author([[:space:]]|:)+(.+)$'
-  body="${body,,}"
+  body="$(lowercase "$body")"
   [[ "$body" =~ $pattern ]] || return 0
   normalize_attribution_text "${BASH_REMATCH[3]}"
 }
@@ -1251,8 +1258,8 @@ passive_generation_signature() {
   local body="${1:-}"
   local identifier="${2:-}"
   local verb="${3:-}"
-  body="${body,,}"
-  identifier="${identifier,,}"
+  body="$(lowercase "$body")"
+  identifier="$(lowercase "$identifier")"
   passive_attribution_phrase_present "$body" "$verb by $identifier" && return 0
   passive_attribution_phrase_present "$body" "$verb by a $identifier" && return 0
   passive_attribution_phrase_present "$body" "$verb by an $identifier"
@@ -1301,7 +1308,7 @@ normalize_attribution_text() {
   local value="${1:-}"
   local -a words
   local IFS=" "
-  value="${value,,}"
+  value="$(lowercase "$value")"
   value="${value//[![:alnum:]]/ }"
   read -r -a words <<< "$value"
   printf '%s\n' "${words[*]}"
@@ -1419,6 +1426,7 @@ function_name_seen() {
   local name="${1:-}"
   local function_name
   [[ "$name" == "main" ]] && return 0
+  [[ "${#FUNCTION_NAMES[@]}" -gt 0 ]] || return 1
   for function_name in "${FUNCTION_NAMES[@]}"; do
     [[ "$function_name" == "$name" ]] && return 0
   done
@@ -1431,6 +1439,7 @@ has_unguarded_arg_assignment() {
   local -a segments
   line="$(command_list_segments "$line")"
   IFS=';' read -r -a segments <<< "$line"
+  [[ "${#segments[@]}" -gt 0 ]] || return 1
   for segment in "${segments[@]}"; do
     segment="$(trim "$segment")"
     assignment_segment_uses_unguarded_arg "$segment" && return 0
@@ -1621,7 +1630,7 @@ shell_comment_ignored() {
 
 shell_comment_directive() {
   local body="${1:-}"
-  body="${body,,}"
+  body="$(lowercase "$body")"
   [[ "$body" == shellcheck* ]] && return 0
   [[ "$body" == noqa* ]]
 }
@@ -1637,6 +1646,7 @@ comment_allowed() {
 comment_matches_any_regex() {
   local body="${1:-}"
   local matcher
+  [[ "${#COMMENT_MATCHERS[@]}" -gt 0 ]] || return 1
   for matcher in "${COMMENT_MATCHERS[@]}"; do
     comment_matches_regex "$body" "$matcher" && return 0
   done
@@ -1646,14 +1656,18 @@ comment_matches_any_regex() {
 comment_matches_regex() {
   local body="${1:-}"
   local matcher
+  local normalized_body normalized_matcher
   matcher="$(trim "${2:-}")"
   [[ -n "$matcher" ]] || return 1
-  [[ "${body,,}" =~ ${matcher,,} ]]
+  normalized_body="$(lowercase "$body")"
+  normalized_matcher="$(lowercase "$matcher")"
+  [[ "$normalized_body" =~ $normalized_matcher ]]
 }
 
 comment_has_prefix_identifier() {
   local body="${1:-}"
   local identifier
+  [[ "${#COMMENT_PREFIX_IDENTIFIERS[@]}" -gt 0 ]] || return 1
   for identifier in "${COMMENT_PREFIX_IDENTIFIERS[@]}"; do
     comment_prefix_matches "$body" "$identifier" && return 0
   done
@@ -1665,8 +1679,8 @@ comment_prefix_matches() {
   body="$(trim "${1:-}")"
   identifier="$(trim "${2:-}")"
   [[ -n "$identifier" ]] || return 1
-  body="${body,,}"
-  identifier="${identifier,,}"
+  body="$(lowercase "$body")"
+  identifier="$(lowercase "$identifier")"
   [[ "$body" == "$identifier"* ]] || return 1
   identifier_ends_word "$identifier" || return 0
   remainder="${body:${#identifier}:1}"
@@ -1676,6 +1690,7 @@ comment_prefix_matches() {
 comment_has_suffix_identifier() {
   local body="${1:-}"
   local identifier
+  [[ "${#COMMENT_SUFFIX_IDENTIFIERS[@]}" -gt 0 ]] || return 1
   for identifier in "${COMMENT_SUFFIX_IDENTIFIERS[@]}"; do
     comment_suffix_matches "$body" "$identifier" && return 0
   done
@@ -1687,8 +1702,8 @@ comment_suffix_matches() {
   body="$(trim "${1:-}")"
   identifier="$(trim "${2:-}")"
   [[ -n "$identifier" ]] || return 1
-  body="${body,,}"
-  identifier="${identifier,,}"
+  body="$(lowercase "$body")"
+  identifier="$(lowercase "$identifier")"
   [[ "$body" == *"$identifier" ]] || return 1
   offset=$((${#body} - ${#identifier}))
   (( offset == 0 )) && return 0
@@ -1858,7 +1873,8 @@ direct_entry_from_line() {
 direct_entry_word() {
   local word="${1:-}"
   [[ "$word" == -* ]] && return 1
-  path_matches_any "$word" DIRECT_SHELL_ENTRY_PATTERNS || return 1
+  [[ "${#DIRECT_SHELL_ENTRY_PATTERNS[@]}" -gt 0 ]] || return 1
+  path_matches_any "$word" "${DIRECT_SHELL_ENTRY_PATTERNS[@]}" || return 1
   printf '%s\n' "$word"
 }
 

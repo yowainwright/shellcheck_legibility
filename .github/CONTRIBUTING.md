@@ -2,7 +2,7 @@
 
 ## Development
 
-Install Bash 4.3 or newer, ShellCheck, and Docker, then run:
+Install Bash, ShellCheck, and Docker, then run:
 
 ```sh
 make check

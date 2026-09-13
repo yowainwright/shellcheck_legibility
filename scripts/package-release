@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+STAGE_DIR=""
+
+usage() {
+  printf 'usage: %s VERSION TARGET OUTPUT\n' "${BASH_SOURCE[0]}" >&2
+  return 2
+}
+
+validate_version() {
+  local version="${1:?}"
+  if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    printf 'invalid release version: %s\n' "$version" >&2
+    exit 2
+  fi
+}
+
+validate_target() {
+  local target="${1:?}"
+  case "$target" in
+    darwin-arm64|darwin-amd64|linux-arm64|linux-amd64)
+      ;;
+    *)
+      printf 'invalid release target: %s\n' "$target" >&2
+      exit 2
+      ;;
+  esac
+}
+
+validate_arguments() {
+  if [[ "$#" -ne 3 ]]; then
+    usage
+    exit 2
+  fi
+  validate_version "$1"
+  validate_target "$2"
+}
+
+initialize_bundle_sources() {
+  BUNDLE_SOURCES=(
+    lib/defaults.bash
+    lib/util.bash
+    lib/rules.bash
+    lib/config.bash
+    lib/cli.bash
+    lib/files.bash
+    lib/lint.bash
+    lib/output.bash
+  )
+}
+
+write_source() {
+  local version="${1:?}"
+  local source="${2:?}"
+  if [[ "$source" != "lib/defaults.bash" ]]; then
+    sed -n '/^VERSION=/!p' "$ROOT_DIR/$source"
+    return
+  fi
+  sed "s/^VERSION=\"[^\"]*\"$/VERSION=\"$version\"/" "$ROOT_DIR/$source"
+}
+
+write_bundle() {
+  local version="${1:?}"
+  local bundle_path="${2:?}"
+  local source
+
+  {
+    printf '%s\n' '#!/usr/bin/env bash' 'set -u'
+    for source in "${BUNDLE_SOURCES[@]}"; do
+      write_source "$version" "$source"
+    done
+    printf '%s\n' 'main "$@"'
+  } > "$bundle_path"
+  chmod +x "$bundle_path"
+}
+
+validate_bundle() {
+  local bundle_path="${1:?}"
+  local version="${2:?}"
+  local reported_version
+  reported_version="$($bundle_path --version)"
+  if [[ "$reported_version" != "$version" ]]; then
+    printf 'bundled version %s does not match release version %s\n' \
+      "$reported_version" "$version" >&2
+    exit 1
+  fi
+}
+
+write_license_files() {
+  local stage_dir="${1:?}"
+  mkdir -p "$stage_dir/LICENSES"
+  cp "$ROOT_DIR/LICENSE" "$stage_dir/LICENSE"
+  cp "$ROOT_DIR/LICENSE" "$stage_dir/LICENSES/shellcheck-legibility"
+}
+
+set_archive_timestamps() {
+  local stage_dir="${1:?}"
+  touch -t 197001010000 \
+    "$stage_dir" \
+    "$stage_dir/shellcheck-legibility" \
+    "$stage_dir/LICENSE" \
+    "$stage_dir/LICENSES" \
+    "$stage_dir/LICENSES/shellcheck-legibility"
+}
+
+cleanup() {
+  if [[ -n "$STAGE_DIR" ]]; then
+    rm -rf "$STAGE_DIR"
+  fi
+}
+
+main() {
+  local version="${1:-}"
+  local output="${3:-}"
+  local output_dir
+  local bundle_path
+
+  ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  validate_arguments "$@"
+  initialize_bundle_sources
+  output_dir="$(dirname "$output")"
+  mkdir -p "$output_dir"
+  STAGE_DIR="$(mktemp -d "$output_dir/.shellcheck-legibility.XXXXXX")"
+  trap cleanup EXIT
+  bundle_path="$STAGE_DIR/shellcheck-legibility"
+  write_bundle "$version" "$bundle_path"
+  validate_bundle "$bundle_path" "$version"
+  write_license_files "$STAGE_DIR"
+  set_archive_timestamps "$STAGE_DIR"
+  export COPYFILE_DISABLE=1
+  tar -czf "$output" -C "$STAGE_DIR" shellcheck-legibility LICENSE LICENSES
+}
+
+main "$@"

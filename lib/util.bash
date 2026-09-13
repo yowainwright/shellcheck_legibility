@@ -1,7 +1,7 @@
-LIST_ARRAY_NAME=""
 LIST_ITEM=""
 LIST_IN_SINGLE_QUOTE="0"
 LIST_IN_DOUBLE_QUOTE="0"
+PARSED_LIST=()
 YAML_DECODED_ESCAPE=""
 YAML_ESCAPE_WIDTH="0"
 
@@ -10,6 +10,10 @@ trim() {
   value="${value#"${value%%[![:space:]]*}"}"
   value="${value%"${value##*[![:space:]]}"}"
   printf '%s\n' "$value"
+}
+
+lowercase() {
+  printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]'
 }
 
 strip_comment() {
@@ -26,10 +30,10 @@ clean_scalar() {
 }
 
 csv_to_array() {
-  local array_name="${1:-}"
-  local raw="${2:-}"
+  local raw="${1:-}"
   local value index
-  reset_list_parser "$array_name"
+  PARSED_LIST=()
+  reset_list_parser
   value="$(trim "$raw")"
   value="${value#[}"
   value="${value%]}"
@@ -41,7 +45,6 @@ csv_to_array() {
 }
 
 reset_list_parser() {
-  LIST_ARRAY_NAME="${1:-}"
   LIST_ITEM=""
   LIST_IN_SINGLE_QUOTE="0"
   LIST_IN_DOUBLE_QUOTE="0"
@@ -106,7 +109,7 @@ decode_yaml_hex_escape() {
   local digits="${2:-}"
   local width="${3:-0}"
   if [[ "${#digits}" -eq "$width" && "$digits" =~ ^[[:xdigit:]]+$ ]]; then
-    printf -v YAML_DECODED_ESCAPE '%b' "\\${marker}${digits}"
+    set_yaml_unicode_escape "$digits"
     YAML_ESCAPE_WIDTH=$((width + 1))
     return
   fi
@@ -150,7 +153,35 @@ set_yaml_symbol_escape() {
 }
 
 set_yaml_unicode_escape() {
-  printf -v YAML_DECODED_ESCAPE '%b' "\\u${1:-}"
+  local digits="${1:-}"
+  local codepoint
+  codepoint=$((16#$digits))
+  if [[ "$codepoint" -le 127 ]]; then
+    set_yaml_utf8_bytes "$codepoint"
+    return
+  fi
+  if [[ "$codepoint" -le 2047 ]]; then
+    set_yaml_utf8_bytes "$((192 + codepoint / 64))" "$((128 + codepoint % 64))"
+    return
+  fi
+  if [[ "$codepoint" -le 65535 ]]; then
+    set_yaml_utf8_bytes "$((224 + codepoint / 4096))" "$((128 + (codepoint / 64) % 64))" "$((128 + codepoint % 64))"
+    return
+  fi
+  if [[ "$codepoint" -le 1114111 ]]; then
+    set_yaml_utf8_bytes "$((240 + codepoint / 262144))" "$((128 + (codepoint / 4096) % 64))" "$((128 + (codepoint / 64) % 64))" "$((128 + codepoint % 64))"
+    return
+  fi
+  YAML_DECODED_ESCAPE="\\u$digits"
+}
+
+set_yaml_utf8_bytes() {
+  local byte escaped=""
+  for byte in "$@"; do
+    printf -v byte '%03o' "$byte"
+    escaped="${escaped}\\${byte}"
+  done
+  printf -v YAML_DECODED_ESCAPE '%b' "$escaped"
 }
 
 list_single_quote_toggles() {
@@ -173,11 +204,10 @@ list_separator_consumed() {
 
 append_list_item() {
   local value
-  local -n target_ref="$LIST_ARRAY_NAME"
   value="$(trim "$LIST_ITEM")"
   LIST_ITEM=""
   [[ -z "$value" ]] && return
-  target_ref+=("$value")
+  PARSED_LIST+=("$value")
 }
 
 count_occurrences() {
@@ -208,11 +238,10 @@ first_word() {
 
 path_matches_any() {
   local path="${1:-}"
-  local array_name="${2:-}"
   local pattern
-  local -n patterns_ref="$array_name"
+  shift
   path="${path#./}"
-  for pattern in "${patterns_ref[@]}"; do
+  for pattern in "$@"; do
     # shellcheck disable=SC2053
     [[ "$path" == $pattern ]] && return 0
   done

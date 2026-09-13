@@ -19,14 +19,13 @@ Shell legibility checks that sit beside ShellCheck.
 
 ShellCheck should own correctness, portability, quoting, and shell semantics. This project focuses on reviewability: control-flow depth, operator-heavy expressions, long functions, function-first script shape, defaulted function args, repeated comparisons, direct shell smoke tests, and patterns that make scripts harder to scan.
 
-Requires Bash 4.3 or newer. ShellCheck is a development lint dependency, not a runtime dependency.
+Requires Bash. ShellCheck is a development lint dependency, not a runtime dependency.
 
 ## Install
 
 ```sh
-brew tap yowainwright/shellcheck_legibility https://github.com/yowainwright/shellcheck_legibility
-brew trust --formula yowainwright/shellcheck_legibility/shellcheck-legibility
-brew install shellcheck-legibility
+brew tap yowainwright/tap
+brew install yowainwright/tap/shellcheck-legibility
 ```
 
 ## Rules

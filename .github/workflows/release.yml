@@ -1,0 +1,43 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install --yes shellcheck
+
+      - name: Validate source
+        run: |
+          make lint
+          PATH=/usr/bin:/bin /bin/bash tests/unit/rules.bash
+
+      - name: Package release assets
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          VERSION="${RELEASE_VERSION#v}"
+          mkdir -p dist
+          for target in darwin-arm64 darwin-amd64 linux-arm64 linux-amd64; do
+            ./scripts/package-release \
+              "$VERSION" \
+              "$target" \
+              "dist/shellcheck-legibility-$target.tar.gz"
+          done
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz --generate-notes
