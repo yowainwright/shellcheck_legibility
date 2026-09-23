@@ -87,7 +87,7 @@ Limit readable operators inside a single command expression.
 
 ### `hoist-if-operators`
 
-Prefer a named check before an operator-heavy `if`, `elif`, `while`, or `until` condition.
+Prefer a named check before an operator-heavy `if`, `elif`, `while`, or `until` condition. Quoted data and case-pattern separators do not count as shell operators; commands inside substitutions still count.
 
 #### options
 
@@ -200,7 +200,7 @@ None.
 
 ### `prefer-guard-clauses`
 
-Prefer guard clauses over wrapping a whole function body in one branch.
+Prefer guard clauses over wrapping a whole function body in one branch. Existing guard clauses and optional branches alongside other work are allowed.
 
 #### options
 
@@ -372,7 +372,7 @@ Prefer `case` over long `elif` chains comparing the same value.
 
 ### `no-bool-literal-args`
 
-Avoid boolean literal arguments whose meaning is only clear at the call site.
+Avoid unquoted boolean literal arguments whose meaning is only clear at the call site. Commands such as `true`, `false`, and `command true` are allowed, including after `&&` or `||`.
 
 #### options
 
