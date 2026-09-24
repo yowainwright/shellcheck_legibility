@@ -58,12 +58,16 @@ initial_config_section() {
 read_config_lines() {
   local path="${1:-}"
   local in_section="${2:-}"
-  local line
+  local line=""
   reset_pending_config_values
-  while IFS= read -r line || [[ -n "$line" ]]; do
+  while IFS= read -r line; do
     process_config_line "$line" "$in_section"
     in_section="$CONFIG_IN_SECTION"
   done < "$path"
+  if [[ -n "$line" ]]; then
+    process_config_line "$line" "$in_section"
+    in_section="$CONFIG_IN_SECTION"
+  fi
   apply_pending_config_values
 }
 
@@ -123,8 +127,14 @@ parse_yaml_scalar() {
   local inner
   value="$(trim "$value")"
   case "$value" in
-    \"*\") inner="${value:1:$((${#value} - 2))}"; decode_yaml_double_quoted "$inner" ;;
-    \'*\') inner="${value:1:$((${#value} - 2))}"; printf '%s\n' "${inner//\'\'/\'}" ;;
+    \"*\")
+      inner="${value:1:$((${#value} - 2))}"
+      decode_yaml_double_quoted "$inner"
+      ;;
+    \'*\')
+      inner="${value:1:$((${#value} - 2))}"
+      printf '%s\n' "${inner//\'\'/\'}"
+      ;;
     *) printf '%s\n' "$value" ;;
   esac
 }
@@ -175,9 +185,9 @@ reset_pending_config_values() {
 
 config_array_key() {
   case "${1:-}" in
-    select|ignore|exclude) return 0 ;;
-    executable-entry-patterns|direct-shell-entry-patterns|executable-runtimes) return 0 ;;
-    comment-matchers|comment-prefix-identifiers|comment-suffix-identifiers) return 0 ;;
+    select | ignore | exclude) return 0 ;;
+    executable-entry-patterns | direct-shell-entry-patterns | executable-runtimes) return 0 ;;
+    comment-matchers | comment-prefix-identifiers | comment-suffix-identifiers) return 0 ;;
     automated-comment-identifiers) return 0 ;;
   esac
   return 1
@@ -243,6 +253,18 @@ apply_core_config_value() {
     select) reset_array_from_csv SELECT "$value" ;;
     ignore) reset_array_from_csv IGNORE "$value" ;;
     exclude) reset_array_from_csv EXCLUDE "$value" ;;
+    *)
+      apply_core_threshold_config_value "$key" "$value"
+      return
+      ;;
+  esac
+  return 0
+}
+
+apply_core_threshold_config_value() {
+  local key="${1:-}"
+  local value="${2:-}"
+  case "$key" in
     max-expression-operators) MAX_EXPRESSION_OPERATORS="$(clean_scalar "$value")" ;;
     max-if-operators) MAX_CONDITION_OPERATORS="$(clean_scalar "$value")" ;;
     max-control-flow-depth) MAX_CONTROL_FLOW_DEPTH="$(clean_scalar "$value")" ;;
@@ -282,21 +304,31 @@ reset_array_from_csv() {
   local value="${2:-}"
   csv_to_array "$value"
   if [[ "${#PARSED_LIST[@]}" -eq 0 ]]; then
-    case "$array_name" in
-      SELECT) SELECT=() ;;
-      IGNORE) IGNORE=() ;;
-      EXCLUDE) EXCLUDE=() ;;
-      EXECUTABLE_ENTRY_PATTERNS) EXECUTABLE_ENTRY_PATTERNS=() ;;
-      DIRECT_SHELL_ENTRY_PATTERNS) DIRECT_SHELL_ENTRY_PATTERNS=() ;;
-      EXECUTABLE_RUNTIMES) EXECUTABLE_RUNTIMES=() ;;
-      COMMENT_MATCHERS) COMMENT_MATCHERS=() ;;
-      COMMENT_PREFIX_IDENTIFIERS) COMMENT_PREFIX_IDENTIFIERS=() ;;
-      COMMENT_SUFFIX_IDENTIFIERS) COMMENT_SUFFIX_IDENTIFIERS=() ;;
-      AUTOMATED_COMMENT_IDENTIFIERS) AUTOMATED_COMMENT_IDENTIFIERS=() ;;
-      *) return 1 ;;
-    esac
+    clear_config_array "$array_name"
     return
   fi
+  assign_config_array "$array_name"
+}
+
+clear_config_array() {
+  local array_name="${1:-}"
+  case "$array_name" in
+    SELECT) SELECT=() ;;
+    IGNORE) IGNORE=() ;;
+    EXCLUDE) EXCLUDE=() ;;
+    EXECUTABLE_ENTRY_PATTERNS) EXECUTABLE_ENTRY_PATTERNS=() ;;
+    DIRECT_SHELL_ENTRY_PATTERNS) DIRECT_SHELL_ENTRY_PATTERNS=() ;;
+    EXECUTABLE_RUNTIMES) EXECUTABLE_RUNTIMES=() ;;
+    COMMENT_MATCHERS) COMMENT_MATCHERS=() ;;
+    COMMENT_PREFIX_IDENTIFIERS) COMMENT_PREFIX_IDENTIFIERS=() ;;
+    COMMENT_SUFFIX_IDENTIFIERS) COMMENT_SUFFIX_IDENTIFIERS=() ;;
+    AUTOMATED_COMMENT_IDENTIFIERS) AUTOMATED_COMMENT_IDENTIFIERS=() ;;
+    *) return 1 ;;
+  esac
+}
+
+assign_config_array() {
+  local array_name="${1:-}"
   case "$array_name" in
     SELECT) SELECT=("${PARSED_LIST[@]}") ;;
     IGNORE) IGNORE=("${PARSED_LIST[@]}") ;;

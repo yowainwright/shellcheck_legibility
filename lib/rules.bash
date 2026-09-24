@@ -50,7 +50,7 @@ comment_rule_selected() {
 
 comment_rule_code() {
   case "${1:-}" in
-    LEG041|LEG042|LEG043) return 0 ;;
+    LEG041 | LEG042 | LEG043) return 0 ;;
   esac
   return 1
 }

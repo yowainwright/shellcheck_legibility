@@ -10,16 +10,15 @@ usage() {
 
 validate_version() {
   local version="${1:?}"
-  if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    printf 'invalid release version: %s\n' "$version" >&2
-    exit 2
-  fi
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && return
+  printf 'invalid release version: %s\n' "$version" >&2
+  exit 2
 }
 
 validate_target() {
   local target="${1:?}"
   case "$target" in
-    darwin-arm64|darwin-amd64|linux-arm64|linux-amd64)
+    darwin-arm64 | darwin-amd64 | linux-arm64 | linux-amd64)
       ;;
     *)
       printf 'invalid release target: %s\n' "$target" >&2
@@ -105,24 +104,28 @@ set_archive_timestamps() {
 }
 
 cleanup() {
-  if [[ -n "$STAGE_DIR" ]]; then
-    rm -rf "$STAGE_DIR"
-  fi
+  [[ -n "$STAGE_DIR" ]] || return 0
+  rm -rf "$STAGE_DIR"
+}
+
+initialize_release_stage() {
+  local output="${1:?}"
+  local output_dir
+  output_dir="$(dirname "$output")"
+  mkdir -p "$output_dir"
+  STAGE_DIR="$(mktemp -d "$output_dir/.shellcheck-legibility.XXXXXX")"
+  trap cleanup EXIT
 }
 
 main() {
   local version="${1:-}"
   local output="${3:-}"
-  local output_dir
   local bundle_path
 
   ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   validate_arguments "$@"
   initialize_bundle_sources
-  output_dir="$(dirname "$output")"
-  mkdir -p "$output_dir"
-  STAGE_DIR="$(mktemp -d "$output_dir/.shellcheck-legibility.XXXXXX")"
-  trap cleanup EXIT
+  initialize_release_stage "$output"
   bundle_path="$STAGE_DIR/shellcheck-legibility"
   write_bundle "$version" "$bundle_path"
   validate_bundle "$bundle_path" "$version"

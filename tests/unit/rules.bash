@@ -805,6 +805,9 @@ test_false_positive_regressions() {
   test_component_filename_still_reported
   test_literal_operators_allowed
   test_heredoc_is_not_shell_syntax
+  test_group_redirection_does_not_close_function
+  test_case_parser_function_closes_before_next_function
+  test_function_structural_state_is_restored
   test_real_function_lines_still_reported
 }
 
@@ -1065,6 +1068,47 @@ test_heredoc_function_lines_preserved() {
   scan_fixture 'write() {' "cat <<'EOF'" 'data' '}' 'more data' 'EOF' '}'
   assert_has_code "LEG038"
   assert_equal "Function has 7 lines (max 4). Extract focused helper functions." "${DIAG_MESSAGES[0]}"
+}
+
+test_group_redirection_does_not_close_function() {
+  reset_test_state
+  SELECT=("LEG039")
+  scan_fixture 'write_bundle() {' '{' 'printf output' '} > "$bundle_path"' 'chmod +x "$bundle_path"' '}'
+  assert_no_diagnostics
+}
+
+test_case_parser_function_closes_before_next_function() {
+  reset_test_state
+  SELECT=("LEG039")
+  scan_case_keyword_fixture
+  assert_equal "0" "${#SHELL_CASE_STATES[@]}"
+  assert_equal "0" "$IN_FUNCTION"
+  assert_equal "0" "$CONTROL_FLOW_DEPTH"
+  assert_has_code "LEG039"
+}
+
+scan_case_keyword_fixture() {
+  scan_fixture \
+    'check_words() {' \
+    'for word in "${words[@]}"; do' \
+    'case "$word" in' \
+    '"(") paren_depth=$((paren_depth + 1)); continue ;;' \
+    'esac' \
+    'case "$word" in' \
+    '__SEQUENCE__|__AND__|__OR__) expecting_command="1"; continue ;;' \
+    'esac' \
+    'case "$word" in' \
+    "if|then|elif|else|fi|while|until|for|select|do|done|case|'esac') return 0 ;;" \
+    'esac' 'done' 'return 1' '}' 'docker build .'
+}
+
+test_function_structural_state_is_restored() {
+  reset_test_state
+  SELECT=("LEG039")
+  scan_fixture 'broken() {' 'if ready; then' 'work' '}' 'docker build .'
+  assert_equal "0" "$CONTROL_FLOW_DEPTH"
+  assert_equal "0" "$IF_DEPTH"
+  assert_has_code "LEG039"
 }
 
 main "$@"

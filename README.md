@@ -482,6 +482,8 @@ Reject comments that do not match a configured regular-expression matcher, prefi
 
 Shebangs, ShellCheck directives, and `noqa` directives are ignored. No matcher or identifier is configured by default, so selecting this rule directly rejects ordinary comments.
 
+This repository selects all three comment rules in `.shellcheck-legibility.yml` and allows only the `!NOTE` prefix. `AGENTS.md` reserves that marker for code comments explicitly requested by a human.
+
 #### options
 
 - `comment-matchers`: case-insensitive Bash regular expressions matched anywhere in the comment body. Default: `[]`.

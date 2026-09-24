@@ -14,9 +14,10 @@ check: lint unit e2e self-lint
 
 lint:
 	shellcheck -x -S warning $(SHELLCHECK_FILES)
+	shfmt -d -i 2 -ci -sr $(SHELLCHECK_FILES)
 
 self-lint:
-	bin/shellcheck-legibility check $(SELF_LINT_TARGETS) --exit-zero
+	bin/shellcheck-legibility check $(SELF_LINT_TARGETS)
 
 test: unit e2e
 

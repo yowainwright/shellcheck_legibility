@@ -82,7 +82,10 @@ decode_yaml_double_quoted() {
   local index char escape_start result=""
   for ((index = 0; index < ${#value}; index++)); do
     char="${value:index:1}"
-    [[ "$char" == "\\" ]] || { result+="$char"; continue; }
+    if [[ "$char" != "\\" ]]; then
+      result+="$char"
+      continue
+    fi
     escape_start=$((index + 1))
     decode_yaml_escape "${value:escape_start}"
     result+="$YAML_DECODED_ESCAPE"
@@ -95,7 +98,11 @@ decode_yaml_escape() {
   local value="${1:-}"
   local char="${value:0:1}"
   YAML_ESCAPE_WIDTH="1"
-  [[ -n "$char" ]] || { YAML_DECODED_ESCAPE="\\"; YAML_ESCAPE_WIDTH="0"; return; }
+  if [[ -z "$char" ]]; then
+    YAML_DECODED_ESCAPE="\\"
+    YAML_ESCAPE_WIDTH="0"
+    return
+  fi
   case "$char" in
     x) decode_yaml_hex_escape x "${value:1:2}" 2 ;;
     u) decode_yaml_hex_escape u "${value:1:4}" 4 ;;
@@ -108,7 +115,11 @@ decode_yaml_hex_escape() {
   local marker="${1:-}"
   local digits="${2:-}"
   local width="${3:-0}"
-  if [[ "${#digits}" -eq "$width" && "$digits" =~ ^[[:xdigit:]]+$ ]]; then
+  if [[ "${#digits}" -ne "$width" ]]; then
+    YAML_DECODED_ESCAPE="\\$marker"
+    return
+  fi
+  if [[ "$digits" =~ ^[[:xdigit:]]+$ ]]; then
     set_yaml_unicode_escape "$digits"
     YAML_ESCAPE_WIDTH=$((width + 1))
     return
@@ -156,23 +167,28 @@ set_yaml_unicode_escape() {
   local digits="${1:-}"
   local codepoint
   codepoint=$((16#$digits))
-  if [[ "$codepoint" -le 127 ]]; then
+  if ((codepoint > 1114111)); then
+    YAML_DECODED_ESCAPE="\\u$digits"
+    return
+  fi
+  set_yaml_codepoint_bytes "$codepoint"
+}
+
+set_yaml_codepoint_bytes() {
+  local codepoint="${1:-0}"
+  if ((codepoint <= 127)); then
     set_yaml_utf8_bytes "$codepoint"
     return
   fi
-  if [[ "$codepoint" -le 2047 ]]; then
+  if ((codepoint <= 2047)); then
     set_yaml_utf8_bytes "$((192 + codepoint / 64))" "$((128 + codepoint % 64))"
     return
   fi
-  if [[ "$codepoint" -le 65535 ]]; then
+  if ((codepoint <= 65535)); then
     set_yaml_utf8_bytes "$((224 + codepoint / 4096))" "$((128 + (codepoint / 64) % 64))" "$((128 + codepoint % 64))"
     return
   fi
-  if [[ "$codepoint" -le 1114111 ]]; then
-    set_yaml_utf8_bytes "$((240 + codepoint / 262144))" "$((128 + (codepoint / 4096) % 64))" "$((128 + (codepoint / 64) % 64))" "$((128 + codepoint % 64))"
-    return
-  fi
-  YAML_DECODED_ESCAPE="\\u$digits"
+  set_yaml_utf8_bytes "$((240 + codepoint / 262144))" "$((128 + (codepoint / 4096) % 64))" "$((128 + (codepoint / 64) % 64))" "$((128 + codepoint % 64))"
 }
 
 set_yaml_utf8_bytes() {

@@ -29,19 +29,41 @@ parse_args() {
 parse_one_arg() {
   ARG_SHIFT="1"
   case "${1:-}" in
-    --config) CONFIG_PATH="${2:-}"; ARG_SHIFT="2" ;;
-    --config=*) CONFIG_PATH="${1#*=}" ;;
-    --output-format) OUTPUT_FORMAT="${2:-}"; ARG_SHIFT="2" ;;
-    --output-format=*) OUTPUT_FORMAT="${1#*=}" ;;
-    --select) CLI_SELECT="${2:-}"; ARG_SHIFT="2" ;;
-    --select=*) CLI_SELECT="${1#*=}" ;;
-    --ignore) CLI_IGNORE="${2:-}"; ARG_SHIFT="2" ;;
-    --ignore=*) CLI_IGNORE="${1#*=}" ;;
+    --config | --output-format | --select | --ignore) parse_option_value "$@" ;;
+    --config=* | --output-format=* | --select=* | --ignore=*) parse_inline_option "${1:-}" ;;
     --exit-zero) EXIT_ZERO="1" ;;
-    --version) printf '%s\n' "$VERSION"; exit 0 ;;
-    -h|--help) usage; exit 0 ;;
+    --version)
+      printf '%s\n' "$VERSION"
+      exit 0
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
     -*) unknown_option "${1:-}" ;;
     *) TARGETS+=("${1:-}") ;;
+  esac
+}
+
+parse_option_value() {
+  case "${1:-}" in
+    --config) CONFIG_PATH="${2:-}" ;;
+    --output-format) OUTPUT_FORMAT="${2:-}" ;;
+    --select) CLI_SELECT="${2:-}" ;;
+    --ignore) CLI_IGNORE="${2:-}" ;;
+  esac
+  ARG_SHIFT="2"
+}
+
+parse_inline_option() {
+  local argument="${1:-}"
+  local option="${argument%%=*}"
+  local value="${argument#*=}"
+  case "$option" in
+    --config) CONFIG_PATH="$value" ;;
+    --output-format) OUTPUT_FORMAT="$value" ;;
+    --select) CLI_SELECT="$value" ;;
+    --ignore) CLI_IGNORE="$value" ;;
   esac
 }
 

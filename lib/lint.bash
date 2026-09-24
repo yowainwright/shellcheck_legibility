@@ -73,6 +73,8 @@ reset_function_scan_state() {
   IN_FUNCTION="0"
   FUNCTION_START_LINE="0"
   FUNCTION_CONTROL_DEPTH="0"
+  FUNCTION_LOOP_DEPTH="0"
+  FUNCTION_IF_DEPTH="0"
   FUNCTION_BODY_START_LINE="0"
   FUNCTION_GUARD_LINE="0"
   FUNCTION_GUARD_TEXT=""
@@ -112,11 +114,19 @@ check_file_rules() {
 
 scan_file_lines() {
   local path="${1:-}"
-  local line
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    SCAN_LINE_NUMBER=$((SCAN_LINE_NUMBER + 1))
-    scan_line "$path" "$SCAN_LINE_NUMBER" "$line"
+  local line=""
+  while IFS= read -r line; do
+    scan_file_line "$path" "$line"
   done < "$path"
+  [[ -n "$line" ]] || return
+  scan_file_line "$path" "$line"
+}
+
+scan_file_line() {
+  local path="${1:-}"
+  local line="${2:-}"
+  SCAN_LINE_NUMBER=$((SCAN_LINE_NUMBER + 1))
+  scan_line "$path" "$SCAN_LINE_NUMBER" "$line"
 }
 
 scan_line() {
@@ -189,7 +199,7 @@ run_scanned_comment_checks() {
 heredoc_payload_line() {
   local line="${1:-}"
   local delimiter
-  (( ${#HEREDOC_DELIMITERS[@]} > 0 )) || return 1
+  ((${#HEREDOC_DELIMITERS[@]} > 0)) || return 1
   delimiter="${HEREDOC_DELIMITERS[0]}"
   [[ "${HEREDOC_TAB_STRIPPING[0]}" == "1" ]] && line="$(strip_leading_tabs "$line")"
   [[ "$line" == "$delimiter" ]] && close_heredoc
@@ -258,8 +268,8 @@ append_shell_code() {
   local char="${1:-}"
   local last
   [[ "$SHELL_IN_SINGLE_QUOTE$SHELL_IN_DOUBLE_QUOTE" == "00" ]] || return
-  last=$(( ${#SHELL_CASE_STATES[@]} - 1 ))
-  if (( last >= 0 )); then
+  last=$((${#SHELL_CASE_STATES[@]} - 1))
+  if ((last >= 0)); then
     [[ "${SHELL_CASE_STATES[$last]}" == "pattern" ]] && return
   fi
   SHELL_CODE+="$char"
@@ -318,7 +328,7 @@ shell_backtick_substitution_consumed() {
 
 backtick_context_open() {
   local last="${1:--1}"
-  (( last >= 0 )) || return 1
+  ((last >= 0)) || return 1
   [[ "${SHELL_CONTEXT_TYPES[$last]}" == "backtick" ]]
 }
 
@@ -368,7 +378,7 @@ close_shell_single_quote() {
 ansi_c_quote_prefix_at() {
   local line="${1:-}"
   local index="${2:-0}"
-  (( index > 0 )) || return 1
+  ((index > 0)) || return 1
   [[ "${line:$((index - 1)):1}" == '$' ]]
 }
 
@@ -376,10 +386,29 @@ update_shell_case_state() {
   local line="${1:-}"
   local index="${2:-0}"
   [[ "$SHELL_IN_SINGLE_QUOTE$SHELL_IN_DOUBLE_QUOTE" == "00" ]] || return
-  shell_keyword_at "$line" "$index" "case" && SHELL_CASE_STATES+=("awaiting-in") && return
+  open_shell_case_if_keyword "$line" "$index" && return
   shell_keyword_at "$line" "$index" "in" && open_shell_case_patterns && return
   shell_keyword_at "$line" "$index" "esac" && close_shell_case && return
   shell_case_terminator_at "$line" "$index" && open_next_shell_case_pattern
+}
+
+open_shell_case_if_keyword() {
+  local line="${1:-}"
+  local index="${2:-0}"
+  shell_keyword_at "$line" "$index" "case" || return 1
+  shell_case_keyword_allowed || return 1
+  SHELL_CASE_STATES+=("awaiting-in")
+}
+
+shell_case_keyword_allowed() {
+  local last_case
+  local last_context
+  last_case=$((${#SHELL_CASE_STATES[@]} - 1))
+  ((last_case < 0)) && return 0
+  [[ "${SHELL_CASE_STATES[$last_case]}" != "pattern" ]] && return 0
+  last_context=$((${#SHELL_CONTEXT_TYPES[@]} - 1))
+  ((last_context >= 0)) || return 1
+  [[ "${SHELL_CONTEXT_TYPES[$last_context]}" == "parenthesis" ]]
 }
 
 shell_keyword_at() {
@@ -390,14 +419,14 @@ shell_keyword_at() {
   [[ "${line:index:${#keyword}}" == "$keyword" ]] || return 1
   before="${line:$((index - 1)):1}"
   after="${line:$((index + ${#keyword})):1}"
-  (( index == 0 )) || [[ ! "$before" =~ [[:alnum:]_] ]] || return 1
+  ((index == 0)) || [[ ! "$before" =~ [[:alnum:]_] ]] || return 1
   [[ -z "$after" || ! "$after" =~ [[:alnum:]_] ]]
 }
 
 open_shell_case_patterns() {
   local last
   last=$((${#SHELL_CASE_STATES[@]} - 1))
-  (( last >= 0 )) || return 1
+  ((last >= 0)) || return 1
   [[ "${SHELL_CASE_STATES[$last]}" == "awaiting-in" ]] || return 1
   SHELL_CASE_STATES[$last]="pattern"
 }
@@ -405,7 +434,7 @@ open_shell_case_patterns() {
 close_shell_case() {
   local last
   last=$((${#SHELL_CASE_STATES[@]} - 1))
-  (( last >= 0 )) || return 1
+  ((last >= 0)) || return 1
   SHELL_CASE_STATES=("${SHELL_CASE_STATES[@]:0:last}")
 }
 
@@ -414,7 +443,7 @@ shell_case_terminator_at() {
   local index="${2:-0}"
   local tail="${line:index:3}"
   case "$tail" in
-    ";;"*|";&"*) return 0 ;;
+    ";;"* | ";&"*) return 0 ;;
   esac
   return 1
 }
@@ -422,7 +451,7 @@ shell_case_terminator_at() {
 open_next_shell_case_pattern() {
   local last
   last=$((${#SHELL_CASE_STATES[@]} - 1))
-  (( last >= 0 )) || return 1
+  ((last >= 0)) || return 1
   [[ "${SHELL_CASE_STATES[$last]}" == "body" ]] || return 1
   SHELL_CASE_STATES[$last]="pattern"
 }
@@ -432,7 +461,7 @@ shell_case_arm_parenthesis_consumed() {
   local last
   [[ "$char" == ")" ]] || return 1
   last=$((${#SHELL_CASE_STATES[@]} - 1))
-  (( last >= 0 )) || return 1
+  ((last >= 0)) || return 1
   [[ "${SHELL_CASE_STATES[$last]}" == "pattern" ]] || return 1
   SHELL_CASE_STATES[$last]="body"
 }
@@ -442,7 +471,7 @@ shell_command_parenthesis_consumed() {
   local last
   [[ "$SHELL_IN_SINGLE_QUOTE$SHELL_IN_DOUBLE_QUOTE" == "00" ]] || return 1
   last=$((${#SHELL_CONTEXT_TYPES[@]} - 1))
-  (( last >= 0 )) || return 1
+  ((last >= 0)) || return 1
   [[ "${SHELL_CONTEXT_TYPES[$last]}" == "parenthesis" ]] || return 1
   [[ "$char" == "(" ]] && increment_shell_command_parenthesis "$last" && return 0
   [[ "$char" == ")" ]] || return 1
@@ -476,7 +505,7 @@ close_shell_context() {
 shell_command_parenthesis_remains() {
   local last="${1:-0}"
   local depth="${2:-0}"
-  (( depth > 0 )) || return 1
+  ((depth > 0)) || return 1
   SHELL_COMMAND_PAREN_DEPTHS[$last]="$depth"
 }
 
@@ -495,7 +524,7 @@ shell_heredoc_operator_at() {
   [[ "$SHELL_IN_SINGLE_QUOTE$SHELL_IN_DOUBLE_QUOTE" == "00" ]] || return 1
   [[ "${line:index:2}" == "<<" ]] || return 1
   [[ "${line:index:3}" != "<<<" ]] || return 1
-  (( index == 0 )) || [[ "${line:$((index - 1)):1}" != "<" ]] || return 1
+  ((index == 0)) || [[ "${line:$((index - 1)):1}" != "<" ]] || return 1
   heredoc_arithmetic_context "$line" "$index" && return 1
   return 0
 }
@@ -570,7 +599,7 @@ heredoc_delimiter_escape_starts() {
   [[ "$in_double" == "0" ]] && return 0
   next="${token:$((index + 1)):1}"
   case "$next" in
-    '$'|'`'|'"'|"\\") return 0 ;;
+    '$' | '`' | '"' | "\\") return 0 ;;
   esac
   return 1
 }
@@ -582,7 +611,7 @@ queue_parsed_heredoc() {
 
 activate_pending_heredocs() {
   [[ "$SHELL_SCAN_ESCAPED" == "0" ]] || return
-  (( ${#PENDING_HEREDOC_DELIMITERS[@]} > 0 )) || return
+  ((${#PENDING_HEREDOC_DELIMITERS[@]} > 0)) || return
   HEREDOC_DELIMITERS+=("${PENDING_HEREDOC_DELIMITERS[@]}")
   HEREDOC_TAB_STRIPPING+=("${PENDING_HEREDOC_TAB_STRIPPING[@]}")
   PENDING_HEREDOC_DELIMITERS=()
@@ -634,17 +663,17 @@ close_completed_blocks() {
 
 close_if_block() {
   remember_guard_candidate
-  (( IF_DEPTH > 0 )) && IF_DEPTH=$((IF_DEPTH - 1))
+  ((IF_DEPTH > 0)) && IF_DEPTH=$((IF_DEPTH - 1))
   close_control_flow
 }
 
 close_loop_block() {
-  (( LOOP_DEPTH > 0 )) && LOOP_DEPTH=$((LOOP_DEPTH - 1))
+  ((LOOP_DEPTH > 0)) && LOOP_DEPTH=$((LOOP_DEPTH - 1))
   close_control_flow
 }
 
 close_control_flow() {
-  (( CONTROL_FLOW_DEPTH > 0 )) && CONTROL_FLOW_DEPTH=$((CONTROL_FLOW_DEPTH - 1))
+  ((CONTROL_FLOW_DEPTH > 0)) && CONTROL_FLOW_DEPTH=$((CONTROL_FLOW_DEPTH - 1))
 }
 
 update_function_state() {
@@ -669,6 +698,8 @@ maybe_open_function() {
   FUNCTION_START_LINE="$line_number"
   FUNCTION_BODY_START_LINE="0"
   FUNCTION_CONTROL_DEPTH="$CONTROL_FLOW_DEPTH"
+  FUNCTION_LOOP_DEPTH="$LOOP_DEPTH"
+  FUNCTION_IF_DEPTH="$IF_DEPTH"
 }
 
 maybe_open_pending_function() {
@@ -682,6 +713,8 @@ maybe_open_pending_function() {
   FUNCTION_START_LINE="$PENDING_FUNCTION_START_LINE"
   FUNCTION_BODY_START_LINE="0"
   FUNCTION_CONTROL_DEPTH="$CONTROL_FLOW_DEPTH"
+  FUNCTION_LOOP_DEPTH="$LOOP_DEPTH"
+  FUNCTION_IF_DEPTH="$IF_DEPTH"
   clear_pending_function
 }
 
@@ -711,9 +744,12 @@ maybe_close_function() {
   local line_number="${2:-}"
   local line="${3:-}"
   [[ "$IN_FUNCTION" == "1" ]] || return
-  [[ "$line" == "}"* ]] || return
+  [[ "$line" == "}" ]] || return
   check_prefer_guard_clauses "$path"
   check_max_function_lines "$path" "$FUNCTION_START_LINE" "$line_number"
+  CONTROL_FLOW_DEPTH="$FUNCTION_CONTROL_DEPTH"
+  LOOP_DEPTH="$FUNCTION_LOOP_DEPTH"
+  IF_DEPTH="$FUNCTION_IF_DEPTH"
   IN_FUNCTION="0"
 }
 
@@ -826,7 +862,7 @@ handle_elif_line() {
   local line_number="${2:-}"
   local line="${3:-}"
   [[ "$line" == elif* ]] || return 1
-  (( IF_DEPTH > 0 )) && IF_HAS_ALTERNATE[IF_DEPTH]="1"
+  ((IF_DEPTH > 0)) && IF_HAS_ALTERNATE[IF_DEPTH]="1"
   check_hoist_if_operators "$path" "$line_number" "$line"
   check_prefer_case_over_long_if_chain "$path" "$line_number" "$line"
 }
@@ -860,63 +896,146 @@ complete_inline_if() {
 }
 
 inline_if_analysis() {
-  local line="${1:-}" word collecting="0" expecting_command="1" paren_depth="0" inline_depth="0"
-  local found_fi="0" alternate="0" tail="0" has_else="0" if_count="0" fi_count="0" branch=""
-  local words=()
-  line="$(shell_code "$line")"
-  line="${line//;/ ; }"
-  read -r -a words <<< "$line"
-  for word in "${words[@]}"; do
-    case "$word" in
-      "(") paren_depth=$((paren_depth + 1)); [[ "$collecting" == "1" ]] && branch+="( "; continue ;;
-      ")") paren_depth=$((paren_depth - 1)); [[ "$collecting" == "1" ]] && branch+=") "; continue ;;
-    esac
-    (( paren_depth == 0 )) || { [[ "$collecting" == "1" ]] && branch+="$word "; continue; }
-    if [[ "$found_fi" == "1" ]]; then
-      [[ "$word" == ";" ]] || tail="1"
-      continue
-    fi
-    if [[ "$word" == "if" && "$expecting_command" == "1" ]]; then
-      if_count=$((if_count + 1))
-      inline_depth=$((inline_depth + 1))
-    fi
-    [[ "$word" == "then" && "$expecting_command" == "1" ]] && collecting="1" && expecting_command="1" && continue
-    if [[ "$expecting_command" == "1" ]]; then
-      case "$word" in
-        else|elif)
-          if (( inline_depth == 1 )); then
-            alternate="1"
-            [[ "$word" == "else" ]] && has_else="1"
-            collecting="0"
-          else
-            [[ "$collecting" == "1" ]] && branch+="$word "
-          fi
-          continue
-          ;;
-      esac
-    fi
-    if [[ "$word" == "fi" && "$expecting_command" == "1" ]]; then
-      if (( inline_depth > 1 )); then
-        inline_depth=$((inline_depth - 1))
-        [[ "$collecting" == "1" ]] && branch+="fi "
-        expecting_command="0"
-        continue
-      fi
-      inline_depth=$((inline_depth - 1))
-      fi_count=$((fi_count + 1))
-      found_fi="1"
-      continue
-    fi
-    if [[ "$word" == ";" ]]; then
-      [[ "$collecting" == "1" ]] && branch+="; "
-      expecting_command="1"
-      continue
-    fi
-    [[ "$collecting" == "1" ]] && branch+="$word "
-    expecting_command="0"
+  local word
+  prepare_inline_if_words "${1:-}"
+  reset_inline_if_analysis
+  for word in "${INLINE_ANALYSIS_WORDS[@]}"; do
+    consume_inline_if_word "$word"
   done
-  (( if_count > 0 && inline_depth == 0 && fi_count == 1 )) || return 1
-  printf '%s\n%s\n' "$alternate$tail$has_else" "$branch"
+  inline_if_analysis_complete || return 1
+  printf '%s\n%s\n' "$INLINE_ANALYSIS_ALTERNATE$INLINE_ANALYSIS_TAIL$INLINE_ANALYSIS_HAS_ELSE" "$INLINE_ANALYSIS_BRANCH"
+}
+
+prepare_inline_if_words() {
+  local line
+  line="$(shell_code "${1:-}")"
+  line="${line//;/ ; }"
+  read -r -a INLINE_ANALYSIS_WORDS <<< "$line"
+}
+
+reset_inline_if_analysis() {
+  INLINE_ANALYSIS_PAREN_DEPTH="0"
+  INLINE_ANALYSIS_DEPTH="0"
+  INLINE_ANALYSIS_FOUND_FI="0"
+  INLINE_ANALYSIS_EXPECTING_COMMAND="1"
+  INLINE_ANALYSIS_COLLECTING="0"
+  INLINE_ANALYSIS_ALTERNATE="0"
+  INLINE_ANALYSIS_TAIL="0"
+  INLINE_ANALYSIS_HAS_ELSE="0"
+  INLINE_ANALYSIS_IF_COUNT="0"
+  INLINE_ANALYSIS_FI_COUNT="0"
+  INLINE_ANALYSIS_BRANCH=""
+}
+
+consume_inline_if_word() {
+  local word="${1:-}"
+  consume_inline_if_parenthesis "$word" && return
+  if ((INLINE_ANALYSIS_PAREN_DEPTH != 0)); then
+    append_inline_if_word "$word"
+    return
+  fi
+  consume_inline_if_tail "$word" && return
+  mark_inline_if_start "$word"
+  consume_inline_if_then "$word" && return
+  consume_inline_if_alternate "$word" && return
+  consume_inline_if_close "$word" && return
+  consume_inline_if_separator "$word" && return
+  append_inline_if_word "$word"
+  INLINE_ANALYSIS_EXPECTING_COMMAND="0"
+}
+
+consume_inline_if_parenthesis() {
+  local word="${1:-}"
+  case "$word" in
+    "(")
+      INLINE_ANALYSIS_PAREN_DEPTH=$((INLINE_ANALYSIS_PAREN_DEPTH + 1))
+      append_inline_if_word "$word"
+      return 0
+      ;;
+    ")")
+      INLINE_ANALYSIS_PAREN_DEPTH=$((INLINE_ANALYSIS_PAREN_DEPTH - 1))
+      append_inline_if_word "$word"
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+consume_inline_if_tail() {
+  local word="${1:-}"
+  [[ "$INLINE_ANALYSIS_FOUND_FI" == "1" ]] || return 1
+  [[ "$word" == ";" ]] || INLINE_ANALYSIS_TAIL="1"
+  return 0
+}
+
+mark_inline_if_start() {
+  local word="${1:-}"
+  inline_if_expected_word "if" "$word" || return 1
+  INLINE_ANALYSIS_IF_COUNT=$((INLINE_ANALYSIS_IF_COUNT + 1))
+  INLINE_ANALYSIS_DEPTH=$((INLINE_ANALYSIS_DEPTH + 1))
+}
+
+consume_inline_if_then() {
+  local word="${1:-}"
+  inline_if_expected_word "then" "$word" || return 1
+  INLINE_ANALYSIS_COLLECTING="1"
+  INLINE_ANALYSIS_EXPECTING_COMMAND="1"
+}
+
+consume_inline_if_alternate() {
+  local word="${1:-}"
+  case "$word:$INLINE_ANALYSIS_EXPECTING_COMMAND" in
+    else:1 | elif:1) ;;
+    *) return 1 ;;
+  esac
+  if ((INLINE_ANALYSIS_DEPTH == 1)); then
+    INLINE_ANALYSIS_ALTERNATE="1"
+    [[ "$word" == "else" ]] && INLINE_ANALYSIS_HAS_ELSE="1"
+    INLINE_ANALYSIS_COLLECTING="0"
+    return 0
+  fi
+  append_inline_if_word "$word"
+  return 0
+}
+
+consume_inline_if_close() {
+  local word="${1:-}"
+  inline_if_expected_word "fi" "$word" || return 1
+  if ((INLINE_ANALYSIS_DEPTH > 1)); then
+    INLINE_ANALYSIS_DEPTH=$((INLINE_ANALYSIS_DEPTH - 1))
+    append_inline_if_word "$word"
+    INLINE_ANALYSIS_EXPECTING_COMMAND="0"
+    return 0
+  fi
+  INLINE_ANALYSIS_DEPTH=$((INLINE_ANALYSIS_DEPTH - 1))
+  INLINE_ANALYSIS_FI_COUNT=$((INLINE_ANALYSIS_FI_COUNT + 1))
+  INLINE_ANALYSIS_FOUND_FI="1"
+}
+
+consume_inline_if_separator() {
+  local word="${1:-}"
+  [[ "$word" == ";" ]] || return 1
+  append_inline_if_word "$word"
+  INLINE_ANALYSIS_EXPECTING_COMMAND="1"
+  return 0
+}
+
+append_inline_if_word() {
+  [[ "$INLINE_ANALYSIS_COLLECTING" == "1" ]] || return
+  INLINE_ANALYSIS_BRANCH+="${1:-} "
+}
+
+inline_if_expected_word() {
+  local expected="${1:-}"
+  local word="${2:-}"
+  [[ "$INLINE_ANALYSIS_EXPECTING_COMMAND" == "1" ]] || return 1
+  [[ "$word" == "$expected" ]]
+}
+
+inline_if_analysis_complete() {
+  ((INLINE_ANALYSIS_IF_COUNT > 0)) || return 1
+  ((INLINE_ANALYSIS_DEPTH == 0)) || return 1
+  ((INLINE_ANALYSIS_FI_COUNT == 1))
 }
 
 open_if_block() {
@@ -935,8 +1054,8 @@ open_if_block() {
 }
 
 mark_current_if_else() {
-  (( IF_DEPTH > 0 )) && IF_HAS_ALTERNATE[IF_DEPTH]="1"
-  (( IF_DEPTH > 0 )) && IF_THEN_EXIT[IF_DEPTH]="else"
+  ((IF_DEPTH > 0)) && IF_HAS_ALTERNATE[IF_DEPTH]="1"
+  ((IF_DEPTH > 0)) && IF_THEN_EXIT[IF_DEPTH]="else"
 }
 
 update_loop_state() {
@@ -982,7 +1101,7 @@ open_control_flow() {
 
 update_exit_state() {
   local line="${1:-}"
-  (( IF_DEPTH == 0 )) && return
+  ((IF_DEPTH == 0)) && return
   [[ "${IF_THEN_EXIT[$IF_DEPTH]}" == "else" ]] && return
   command_exits "$line" && IF_THEN_EXIT[IF_DEPTH]="1"
 }
@@ -1010,76 +1129,175 @@ command_code_exits() {
 }
 
 line_has_control_keyword() {
-  local line="${1:-}"
-  local word expecting_command="1" paren_depth="0"
+  local line="${1:-}" word
   local words=()
   line="${line//&&/ __AND__ }"
   line="${line//||/ __OR__ }"
   line="${line//;/ __SEQUENCE__ }"
   line="${line//|/ __PIPE__ }"
   line="${line//&/ __BACKGROUND__ }"
+  reset_control_keyword_state
   read -r -a words <<< "$line"
   for word in "${words[@]}"; do
-    case "$word" in
-      "(") paren_depth=$((paren_depth + 1)); continue ;;
-      ")") paren_depth=$((paren_depth - 1)); continue ;;
-    esac
-    (( paren_depth == 0 )) || continue
-    case "$word" in
-      __SEQUENCE__|__AND__|__OR__|__PIPE__|__BACKGROUND__) expecting_command="1"; continue ;;
-    esac
-    [[ "$expecting_command" == "1" ]] || continue
-    case "$word" in
-      if|then|elif|else|fi|while|until|for|select|do|done|case|'esac') return 0 ;;
-      !) continue ;;
-    esac
-    [[ "$word" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] && continue
-    expecting_command="0"
+    consume_control_keyword_word "$word" && return 0
   done
+  return 1
+}
+
+reset_control_keyword_state() {
+  CONTROL_KEYWORD_EXPECTING_COMMAND="1"
+  CONTROL_KEYWORD_PAREN_DEPTH="0"
+}
+
+consume_control_keyword_word() {
+  local word="${1:-}"
+  consume_control_keyword_parenthesis "$word" && return 1
+  ((CONTROL_KEYWORD_PAREN_DEPTH == 0)) || return 1
+  consume_control_keyword_operator "$word" && return 1
+  [[ "$CONTROL_KEYWORD_EXPECTING_COMMAND" == "1" ]] || return 1
+  control_keyword_token "$word" && return 0
+  [[ "$word" == "!" ]] && return 1
+  [[ "$word" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] && return 1
+  CONTROL_KEYWORD_EXPECTING_COMMAND="0"
+  return 1
+}
+
+consume_control_keyword_parenthesis() {
+  case "${1:-}" in
+    "(")
+      CONTROL_KEYWORD_PAREN_DEPTH=$((CONTROL_KEYWORD_PAREN_DEPTH + 1))
+      return 0
+      ;;
+    ")")
+      CONTROL_KEYWORD_PAREN_DEPTH=$((CONTROL_KEYWORD_PAREN_DEPTH - 1))
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+consume_control_keyword_operator() {
+  case "${1:-}" in
+    __SEQUENCE__ | __AND__ | __OR__ | __PIPE__ | __BACKGROUND__)
+      CONTROL_KEYWORD_EXPECTING_COMMAND="1"
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+control_keyword_token() {
+  case "${1:-}" in
+    if | then | elif | else | fi | while | until | for | select | do | done | case | "esac") return 0 ;;
+  esac
   return 1
 }
 
 command_words_exit() {
   local include_loop_exits="${1:-0}"
-  local word paren_depth="0" operator="__FIRST__" skip_pipeline="0"
-  local COMMAND_EXIT_SUCCESS="1" COMMAND_EXIT_FAILURE="1"
-  local command=()
   shift
+  reset_command_exit_state
+  local word
   for word in "$@"; do
-    case "$word" in
-      "(") paren_depth=$((paren_depth + 1)); continue ;;
-      ")")
-        if (( paren_depth > 0 )); then paren_depth=$((paren_depth - 1)); fi
-        continue
-        ;;
-      esac
-    (( paren_depth == 0 )) || continue
-    if [[ "$skip_pipeline" == "1" ]]; then
-      case "$word" in
-        __PIPE__) continue ;;
-        __SEQUENCE__|__AND__|__OR__|__BACKGROUND__) skip_pipeline="0" ;;
-        *) continue ;;
-      esac
-    fi
-    case "$word" in
-      __PIPE__) command=("__PIPELINE__"); skip_pipeline="1"; continue ;;
-      __BACKGROUND__)
-        command=("__BACKGROUND__")
-        apply_exit_command "$operator" "$include_loop_exits" ${command[@]+"${command[@]}"} && return 0
-        operator="__SEQUENCE__"
-        command=()
-        continue
-        ;;
-      __SEQUENCE__|__AND__|__OR__)
-        apply_exit_command "$operator" "$include_loop_exits" ${command[@]+"${command[@]}"} && return 0
-        operator="$word"
-        command=()
-        continue
-        ;;
-    esac
-    command+=("$word")
+    consume_command_exit_word "$word" "$include_loop_exits" && return 0
   done
-  apply_exit_command "$operator" "$include_loop_exits" ${command[@]+"${command[@]}"}
+  apply_exit_command "$COMMAND_EXIT_OPERATOR" "$include_loop_exits" "${COMMAND_EXIT_WORDS[@]}"
+}
+
+reset_command_exit_state() {
+  COMMAND_EXIT_SUCCESS="1"
+  COMMAND_EXIT_FAILURE="1"
+  COMMAND_EXIT_PAREN_DEPTH="0"
+  COMMAND_EXIT_OPERATOR="__FIRST__"
+  COMMAND_EXIT_SKIP_PIPELINE="0"
+  COMMAND_EXIT_EARLY="0"
+  COMMAND_EXIT_OPERATOR_HANDLED="0"
+  COMMAND_EXIT_WORDS=()
+}
+
+consume_command_exit_word() {
+  local word="${1:-}"
+  local include_loop_exits="${2:-0}"
+  consume_command_parenthesis "$word" && return 1
+  ((COMMAND_EXIT_PAREN_DEPTH == 0)) || return 1
+  skip_command_pipeline_word "$word" && return 1
+  handle_command_exit_operator "$word" "$include_loop_exits" && [[ "$COMMAND_EXIT_EARLY" == "1" ]] && return 0
+  [[ "$COMMAND_EXIT_OPERATOR_HANDLED" == "1" ]] && return 1
+  COMMAND_EXIT_WORDS+=("$word")
+  return 1
+}
+
+consume_command_parenthesis() {
+  local word="${1:-}"
+  case "$word" in
+    "(")
+      COMMAND_EXIT_PAREN_DEPTH=$((COMMAND_EXIT_PAREN_DEPTH + 1))
+      return 0
+      ;;
+    ")")
+      ((COMMAND_EXIT_PAREN_DEPTH > 0)) && COMMAND_EXIT_PAREN_DEPTH=$((COMMAND_EXIT_PAREN_DEPTH - 1))
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+skip_command_pipeline_word() {
+  local word="${1:-}"
+  [[ "$COMMAND_EXIT_SKIP_PIPELINE" == "1" ]] || return 1
+  case "$word" in
+    __PIPE__) return 0 ;;
+    __SEQUENCE__ | __AND__ | __OR__ | __BACKGROUND__)
+      COMMAND_EXIT_SKIP_PIPELINE="0"
+      return 1
+      ;;
+    *) return 0 ;;
+  esac
+}
+
+handle_command_exit_operator() {
+  local word="${1:-}"
+  COMMAND_EXIT_OPERATOR_HANDLED="0"
+  COMMAND_EXIT_EARLY="0"
+  handle_pipeline_operator "$word" && return 0
+  handle_command_boundary_operator "$word" "${2:-0}"
+}
+
+handle_pipeline_operator() {
+  [[ "${1:-}" == "__PIPE__" ]] || return 1
+  COMMAND_EXIT_WORDS=("__PIPELINE__")
+  COMMAND_EXIT_SKIP_PIPELINE="1"
+  COMMAND_EXIT_OPERATOR_HANDLED="1"
+}
+
+handle_command_boundary_operator() {
+  local word="${1:-}"
+  local include_loop_exits="${2:-0}"
+  prepare_command_boundary "$word" || return 1
+  COMMAND_EXIT_OPERATOR_HANDLED="1"
+  complete_command_boundary "$include_loop_exits"
+}
+
+prepare_command_boundary() {
+  local word="${1:-}"
+  case "$word" in
+    __BACKGROUND__)
+      COMMAND_EXIT_WORDS=("__BACKGROUND__")
+      COMMAND_EXIT_NEXT_OPERATOR="__SEQUENCE__"
+      ;;
+    __SEQUENCE__ | __AND__ | __OR__) COMMAND_EXIT_NEXT_OPERATOR="$word" ;;
+    *) return 1 ;;
+  esac
+}
+
+complete_command_boundary() {
+  local include_loop_exits="${1:-0}"
+  if apply_exit_command "$COMMAND_EXIT_OPERATOR" "$include_loop_exits" "${COMMAND_EXIT_WORDS[@]}"; then
+    COMMAND_EXIT_EARLY="1"
+    return 0
+  fi
+  COMMAND_EXIT_OPERATOR="$COMMAND_EXIT_NEXT_OPERATOR"
+  COMMAND_EXIT_WORDS=()
 }
 
 apply_exit_command() {
@@ -1087,7 +1305,7 @@ apply_exit_command() {
   shift 2
   simple_command_exits "$include_loop_exits" "$@" && exits="1"
   case "$operator" in
-    __FIRST__|__SEQUENCE__) apply_sequential_exit "$operator" "$exits" ;;
+    __FIRST__ | __SEQUENCE__) apply_sequential_exit "$operator" "$exits" ;;
     __AND__) apply_and_exit "$exits" ;;
     __OR__) apply_or_exit "$exits" ;;
   esac
@@ -1121,7 +1339,7 @@ simple_command_exits() {
   for word in "$@"; do
     exit_command_prefix_token "$word" && continue
     [[ "$word" == "return" || "$word" == "exit" ]] && return 0
-    [[ "$include_loop_exits" == "1" && ( "$word" == "break" || "$word" == "continue" ) ]] && return 0
+    [[ "$include_loop_exits" == "1" && ("$word" == "break" || "$word" == "continue") ]] && return 0
     return 1
   done
   return 1
@@ -1130,7 +1348,7 @@ simple_command_exits() {
 exit_command_prefix_token() {
   local word="${1:-}"
   case "$word" in
-    command|builtin|exec|time|!|-*) return 0 ;;
+    command | builtin | exec | time | ! | -*) return 0 ;;
   esac
   [[ "$word" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]
 }
@@ -1142,7 +1360,7 @@ check_max_expression_operators() {
   line_starts_control "$expression" && return
   local count
   count="$(count_expression_operators "$expression")"
-  (( count <= MAX_EXPRESSION_OPERATORS )) && return
+  ((count <= MAX_EXPRESSION_OPERATORS)) && return
   report_max_expression_operators "$path" "$line_number" "$count"
 }
 
@@ -1162,7 +1380,7 @@ check_hoist_if_operators() {
   local condition count
   condition="$(condition_text "$(shell_code "$line")")"
   count="$(count_condition_operators "$condition")"
-  (( count <= MAX_CONDITION_OPERATORS )) && return
+  ((count <= MAX_CONDITION_OPERATORS)) && return
   report_hoist_if_operators "$path" "$line_number" "$count"
 }
 
@@ -1179,7 +1397,7 @@ check_max_control_flow_depth() {
   local path="${1:-$SCAN_PATH}"
   local line_number="${2:-$SCAN_LINE_NUMBER}"
   local depth="${3:-$CONTROL_FLOW_DEPTH}"
-  (( depth <= MAX_CONTROL_FLOW_DEPTH )) && return
+  ((depth <= MAX_CONTROL_FLOW_DEPTH)) && return
   local message
   message="Control-flow depth is $depth (max $MAX_CONTROL_FLOW_DEPTH). Prefer guard clauses or extracted functions."
   add_diag "$path" "$line_number" "1" "LEG003" "$message"
@@ -1189,7 +1407,7 @@ check_no_quadratic_patterns() {
   local path="${1:-$SCAN_PATH}"
   local line_number="${2:-$SCAN_LINE_NUMBER}"
   local line="${3:-$CURRENT_LINE_TEXT}"
-  (( LOOP_DEPTH > 0 )) || return
+  ((LOOP_DEPTH > 0)) || return
   local message
   message="Nested loop detected. Consider a lookup, case statement, or extracted function."
   add_diag "$path" "$line_number" "1" "LEG005" "$message"
@@ -1206,7 +1424,7 @@ check_prefer_early_return() {
 report_prefer_early_return() {
   local path="${1:-$SCAN_PATH}"
   local line_number="${2:-$SCAN_LINE_NUMBER}"
-  (( IF_DEPTH > 0 )) || return
+  ((IF_DEPTH > 0)) || return
   [[ "${IF_THEN_EXIT[$IF_DEPTH]}" == "1" ]] || return
   local message
   message="Avoid else after a branch exits. Return or continue early and keep the follow-up path unindented."
@@ -1227,8 +1445,8 @@ reset_guard_candidate() {
 
 remember_guard_candidate() {
   [[ "$IN_FUNCTION" == "1" ]] || return
-  (( IF_DEPTH > 0 )) || return
-  (( CONTROL_FLOW_DEPTH == FUNCTION_CONTROL_DEPTH + 1 )) || return
+  ((IF_DEPTH > 0)) || return
+  ((CONTROL_FLOW_DEPTH == FUNCTION_CONTROL_DEPTH + 1)) || return
   [[ "${IF_THEN_EXIT[$IF_DEPTH]}" == "0" ]] || return
   [[ "${IF_HAS_ALTERNATE[$IF_DEPTH]}" == "0" ]] || return
   [[ "${IF_START_LINE[$IF_DEPTH]}" == "$FUNCTION_BODY_START_LINE" ]] || return
@@ -1240,7 +1458,7 @@ check_prefer_guard_clauses() {
   local path="${1:-$SCAN_PATH}"
   local CURRENT_LINE_TEXT="$FUNCTION_GUARD_TEXT"
   local message
-  (( FUNCTION_GUARD_LINE > 0 )) || return
+  ((FUNCTION_GUARD_LINE > 0)) || return
   message="Prefer a guard clause before the main path instead of wrapping function logic in an if block."
   add_diag "$path" "$FUNCTION_GUARD_LINE" "1" "LEG010" "$message"
 }
@@ -1284,7 +1502,7 @@ check_prefer_object_lookup() {
   name="$(comparison_left_name "$line")"
   [[ -z "$name" ]] && return
   count="$(count_occurrences "$line" "$name")"
-  (( count < MIN_OBJECT_LOOKUP_CHAIN_LENGTH )) && return
+  ((count < MIN_OBJECT_LOOKUP_CHAIN_LENGTH)) && return
   local message
   message="Replace repeated $name equality checks with a case statement or lookup."
   add_diag "$path" "$line_number" "1" "LEG024" "$message"
@@ -1295,7 +1513,7 @@ check_require_filename_matches_dirname() {
   local line_number="${2:-1}"
   local file parent base depth
   depth="$(path_parent_depth "$path")"
-  (( depth < MIN_DIRNAME_MATCH_DEPTH )) && return
+  ((depth < MIN_DIRNAME_MATCH_DEPTH)) && return
   parent="$(basename "$(dirname "$path")")"
   file="$(filename_without_extension "$path")"
   base="${file%%.*}"
@@ -1347,7 +1565,7 @@ check_max_function_lines() {
   local end_line="${3:-$SCAN_LINE_NUMBER}"
   local lines
   lines=$((end_line - start_line + 1))
-  (( lines <= MAX_FUNCTION_LINES )) && return
+  ((lines <= MAX_FUNCTION_LINES)) && return
   local message
   message="Function has $lines lines (max $MAX_FUNCTION_LINES). Extract focused helper functions."
   add_diag "$path" "$start_line" "1" "LEG038" "$message"
@@ -1359,7 +1577,7 @@ check_prefer_functions() {
   local line="${3:-$CURRENT_LINE_TEXT}"
   [[ "$PREFER_FUNCTIONS_REPORTED" == "0" ]] || return
   [[ "$IN_FUNCTION" == "0" ]] || return
-  (( CONTROL_FLOW_DEPTH == 0 )) || return
+  ((CONTROL_FLOW_DEPTH == 0)) || return
   top_level_line_allowed "$line" && return
   local message
   message="Move top-level script logic into named functions and keep only setup plus function dispatch at the top level."
@@ -1429,7 +1647,7 @@ check_automated_comment_body() {
   local body="${4:-}"
   local normalized_body normalized_author lower_body
   prepare_automated_comment_identifiers
-  (( ${#NORMALIZED_AUTOMATED_COMMENT_IDENTIFIERS[@]} > 0 )) || return
+  ((${#NORMALIZED_AUTOMATED_COMMENT_IDENTIFIERS[@]} > 0)) || return
   normalized_body="$(normalize_attribution_text "$body")"
   lower_body="$(lowercase "$body")"
   normalized_author=""
@@ -1471,8 +1689,8 @@ check_stacked_comment_line() {
 
 stacked_comment_follows() {
   local line_number="${1:-0}"
-  (( LAST_COMMENT_LINE > 0 )) || return 1
-  (( line_number == LAST_COMMENT_LINE + 1 ))
+  ((LAST_COMMENT_LINE > 0)) || return 1
+  ((line_number == LAST_COMMENT_LINE + 1))
 }
 
 report_stacked_comment() {
@@ -1617,8 +1835,8 @@ attribution_conjunction_follows() {
   [[ "$suffix" == [[:space:]]* ]] || return 1
   read -r word _ <<< "$suffix"
   case "$word" in
-    and|but|for|nor) return 0 ;;
-    or|so|yet) return 0 ;;
+    and | but | for | nor) return 0 ;;
+    or | so | yet) return 0 ;;
   esac
   return 1
 }
@@ -1684,7 +1902,7 @@ top_level_line_allowed() {
   [[ -z "$line" ]] && return 0
   pending_function_brace_line "$line" && return 0
   is_function_open "$line" && return 0
-  function_declaration_name "$line" >/dev/null && return 0
+  function_declaration_name "$line" > /dev/null && return 0
   top_level_declaration_line "$line" && return 0
   top_level_block_close "$line" && return 0
   top_level_function_dispatch "$line"
@@ -1798,7 +2016,7 @@ declaration_assignment_segment() {
 
 declaration_command_supported() {
   case "${1:-}" in
-    local|declare|typeset) return 0 ;;
+    local | declare | typeset) return 0 ;;
   esac
   return 1
 }
@@ -1926,7 +2144,7 @@ comment_start_allowed() {
   local line="${1:-}"
   local index="${2:-0}"
   local previous
-  (( index == 0 )) && return 0
+  ((index == 0)) && return 0
   previous="${line:$((index - 1)):1}"
   [[ "$previous" =~ [[:space:]] ]] && return 0
   comment_starts_after_operator "$previous"
@@ -1934,7 +2152,7 @@ comment_start_allowed() {
 
 comment_starts_after_operator() {
   case "${1:-}" in
-    ";"|"|"|"&") return 0 ;;
+    ";" | "|" | "&") return 0 ;;
   esac
   return 1
 }
@@ -1943,7 +2161,7 @@ shell_comment_ignored() {
   local index="${1:-0}"
   local body
   body="$(trim "${2:-}")"
-  (( index == 0 )) && [[ "$body" == "!"* ]] && return 0
+  ((index == 0)) && [[ "$body" == "!"* ]] && return 0
   shell_comment_directive "$body"
 }
 
@@ -2025,7 +2243,7 @@ comment_suffix_matches() {
   identifier="$(lowercase "$identifier")"
   [[ "$body" == *"$identifier" ]] || return 1
   offset=$((${#body} - ${#identifier}))
-  (( offset == 0 )) && return 0
+  ((offset == 0)) && return 0
   previous="${body:$((offset - 1)):1}"
   identifier_boundary_char "$previous"
 }
@@ -2087,16 +2305,7 @@ line_starts_control() {
 
 control_word() {
   case "${1:-}" in
-    if) return 0 ;;
-    elif) return 0 ;;
-    while) return 0 ;;
-    until) return 0 ;;
-    for) return 0 ;;
-    case) return 0 ;;
-    else) return 0 ;;
-    fi) return 0 ;;
-    done) return 0 ;;
-    "esac") return 0 ;;
+    if | elif | while | until | for | case | else | fi | done | "esac") return 0 ;;
   esac
   return 1
 }
@@ -2144,7 +2353,7 @@ track_if_chain_comparison() {
   local path="${1:-$SCAN_PATH}"
   local line_number="${2:-$SCAN_LINE_NUMBER}"
   local line="${3:-$CURRENT_LINE_TEXT}"
-  (( IF_DEPTH > 0 )) || return
+  ((IF_DEPTH > 0)) || return
   update_if_chain_count "$path" "$line_number" "$line"
 }
 
@@ -2166,7 +2375,7 @@ maybe_report_if_chain() {
   local line_number="${2:-}"
   local count
   count="${IF_COMPARE_COUNT[$IF_DEPTH]}"
-  (( count < MIN_CASE_CHAIN_LENGTH )) && return
+  ((count < MIN_CASE_CHAIN_LENGTH)) && return
   [[ "${IF_COMPARE_REPORTED[$IF_DEPTH]}" == "1" ]] && return
   report_if_chain "$path" "$line_number" "$count"
 }
@@ -2201,7 +2410,7 @@ direct_entry_word() {
 file_has_allowed_shebang() {
   local path="${1:-}"
   local first_line
-  first_line="$(sed -n '1p' "$path" 2>/dev/null)"
+  first_line="$(sed -n '1p' "$path" 2> /dev/null)"
   [[ "$first_line" == "#!"* ]] || return 1
   shell_runtime_allowed "${first_line#\#!}"
 }
@@ -2237,7 +2446,7 @@ filename_base_allowed() {
 
 filename_base_standalone() {
   case "${1:-}" in
-    index|constants|helpers|utils) return 0 ;;
+    index | constants | helpers | utils) return 0 ;;
   esac
   return 1
 }
@@ -2283,7 +2492,17 @@ has_bool_literal_arg() {
   local word
   local BOOL_EXPECT_COMMAND="1" BOOL_SKIP_ARG="0"
   local tokens=()
-  line="$(shell_code "$line")"
+  line="$(normalize_boolean_argument_line "$line")"
+  read -r -a tokens <<< "$line"
+  for word in "${tokens[@]}"; do
+    bool_literal_token "$word" && return 0
+  done
+  return 1
+}
+
+normalize_boolean_argument_line() {
+  local line
+  line="$(shell_code "${1:-}")"
   line="${line//<<</ __REDIRECTION__ }"
   line="${line//<<-/ __REDIRECTION__ }"
   line="${line//<</ __REDIRECTION__ }"
@@ -2295,34 +2514,47 @@ has_bool_literal_arg() {
   line="${line//>/ __REDIRECTION__ }"
   line="${line//</ __REDIRECTION__ }"
   line="${line//[;&|()]/ ; }"
-  read -r -a tokens <<< "$line"
-  for word in "${tokens[@]}"; do
-    bool_literal_token "$word" && return 0
-  done
-  return 1
+  printf '%s\n' "$line"
 }
 
 bool_literal_token() {
   local word="${1:-}"
-  if [[ "$BOOL_SKIP_ARG" == "1" ]]; then
-    BOOL_SKIP_ARG="0"
-    return 1
-  fi
-  case "$word" in
-    ";"|"{"|"}") BOOL_EXPECT_COMMAND="1"; return 1 ;;
-    __REDIRECTION__) BOOL_SKIP_ARG="1"; return 1 ;;
-  esac
-  if [[ "$BOOL_EXPECT_COMMAND" == "1" ]]; then
-    command_prefix_token "$word" || BOOL_EXPECT_COMMAND="0"
-    return 1
-  fi
+  skip_bool_redirection_arg && return 1
+  bool_token_separator "$word" && return 1
+  skip_bool_command_name "$word" && return 1
   [[ "$word" == "true" || "$word" == "false" ]]
+}
+
+skip_bool_redirection_arg() {
+  [[ "$BOOL_SKIP_ARG" == "1" ]] || return 1
+  BOOL_SKIP_ARG="0"
+}
+
+bool_token_separator() {
+  local word="${1:-}"
+  case "$word" in
+    ";" | "{" | "}")
+      BOOL_EXPECT_COMMAND="1"
+      return 0
+      ;;
+    __REDIRECTION__)
+      BOOL_SKIP_ARG="1"
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+skip_bool_command_name() {
+  local word="${1:-}"
+  [[ "$BOOL_EXPECT_COMMAND" == "1" ]] || return 1
+  command_prefix_token "$word" || BOOL_EXPECT_COMMAND="0"
 }
 
 command_prefix_token() {
   local word="${1:-}"
   case "$word" in
-    if|then|else|elif|while|until|do|!|command|builtin|exec|env|time|-*) return 0 ;;
+    if | then | else | elif | while | until | do | ! | command | builtin | exec | env | time | -*) return 0 ;;
   esac
   [[ "$word" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]
 }

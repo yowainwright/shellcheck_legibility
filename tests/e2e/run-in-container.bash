@@ -13,7 +13,7 @@ main() {
 }
 
 assert_no_shellcheck() {
-  command -v shellcheck >/dev/null 2>&1 && fail "shellcheck should not be installed"
+  command -v shellcheck > /dev/null 2>&1 && fail "shellcheck should not be installed"
 }
 
 assert_version() {

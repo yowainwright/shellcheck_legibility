@@ -60,7 +60,7 @@ is_shell_file() {
 
 shell_extension() {
   case "${1:-}" in
-    *.sh|*.bash|*.zsh|*.ksh) return 0 ;;
+    *.sh | *.bash | *.zsh | *.ksh) return 0 ;;
   esac
   return 1
 }
@@ -68,7 +68,7 @@ shell_extension() {
 shell_shebang() {
   local path="${1:-}"
   local first_line
-  first_line="$(sed -n '1p' "$path" 2>/dev/null)"
+  first_line="$(sed -n '1p' "$path" 2> /dev/null)"
   [[ "$first_line" == "#!"* ]] || return 1
   shell_runtime_allowed "${first_line#\#!}"
 }
