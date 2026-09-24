@@ -838,16 +838,22 @@ handle_if_line() {
   [[ "$line" == if[[:space:]]* ]] || return
   check_hoist_if_operators "$path" "$line_number" "$line"
   open_if_block "$path" "$line_number" "$line"
-  complete_inline_if "$line" || return 0
+  complete_inline_if "$path" "$line_number" "$line" || return 0
 }
 
 complete_inline_if() {
-  local line="${1:-}" analysis flags branch
+  local path="${1:-}" line_number="${2:-}" line="${3:-}" analysis flags branch
+  local has_else="0" then_branch_exits="0"
   analysis="$(inline_if_analysis "$line")" || return 1
   flags="${analysis%%$'\n'*}"
   branch="${analysis#*$'\n'}"
   [[ "${flags:0:1}" == "1" ]] && IF_HAS_ALTERNATE[IF_DEPTH]="1"
-  command_code_exits "$branch" && IF_THEN_EXIT[IF_DEPTH]="1"
+  [[ "${flags:2:1}" == "1" ]] && has_else="1"
+  command_code_exits "$branch" && then_branch_exits="1"
+  if [[ "$then_branch_exits" == "1" ]]; then
+    IF_THEN_EXIT[IF_DEPTH]="1"
+    [[ "$has_else" == "1" ]] && report_prefer_early_return "$path" "$line_number"
+  fi
   close_if_block
   [[ "${flags:1:1}" == "1" ]] && reset_guard_candidate "$line"
   return 0
@@ -855,7 +861,7 @@ complete_inline_if() {
 
 inline_if_analysis() {
   local line="${1:-}" word collecting="0" expecting_command="1" paren_depth="0" inline_depth="0"
-  local found_fi="0" alternate="0" tail="0" if_count="0" fi_count="0" branch=""
+  local found_fi="0" alternate="0" tail="0" has_else="0" if_count="0" fi_count="0" branch=""
   local words=()
   line="$(shell_code "$line")"
   line="${line//;/ ; }"
@@ -880,6 +886,7 @@ inline_if_analysis() {
         else|elif)
           if (( inline_depth == 1 )); then
             alternate="1"
+            [[ "$word" == "else" ]] && has_else="1"
             collecting="0"
           else
             [[ "$collecting" == "1" ]] && branch+="$word "
@@ -909,7 +916,7 @@ inline_if_analysis() {
     expecting_command="0"
   done
   (( if_count > 0 && inline_depth == 0 && fi_count == 1 )) || return 1
-  printf '%s\n%s\n' "$alternate$tail" "$branch"
+  printf '%s\n%s\n' "$alternate$tail$has_else" "$branch"
 }
 
 open_if_block() {
@@ -1193,6 +1200,12 @@ check_prefer_early_return() {
   local line_number="${2:-$SCAN_LINE_NUMBER}"
   local line="${3:-$CURRENT_LINE_TEXT}"
   [[ "$line" == else* ]] || return
+  report_prefer_early_return "$path" "$line_number"
+}
+
+report_prefer_early_return() {
+  local path="${1:-$SCAN_PATH}"
+  local line_number="${2:-$SCAN_LINE_NUMBER}"
   (( IF_DEPTH > 0 )) || return
   [[ "${IF_THEN_EXIT[$IF_DEPTH]}" == "1" ]] || return
   local message
