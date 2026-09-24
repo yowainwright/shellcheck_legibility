@@ -98,6 +98,25 @@ test_core_rules() {
   test_max_function_lines
   test_prefer_functions
   test_prefer_functions_allows_dispatch
+  test_selected_line_rule_skips_other_analysis
+  test_file_rule_skips_source_scan
+}
+
+test_selected_line_rule_skips_other_analysis() {
+  reset_test_state
+  SELECT=("LEG001")
+  MAX_EXPRESSION_OPERATORS=0
+  scan_fixture 'run() {' 'first && second' '}'
+  assert_has_code "LEG001"
+  assert_equal "0" "$CONTROL_FLOW_DEPTH"
+  assert_equal "0" "$IN_FUNCTION"
+}
+
+test_file_rule_skips_source_scan() {
+  reset_test_state
+  SELECT=("LEG025")
+  lint_file "$ROOT_DIR/tests/unit/rules.bash"
+  assert_equal "0" "$SCAN_LINE_NUMBER"
 }
 
 test_function_rules() {

@@ -6,6 +6,19 @@ COMMENT_RULES_ENABLED="0"
 NO_UNMATCHED_COMMENTS_ENABLED="0"
 NO_AUTOMATED_COMMENT_ATTRIBUTION_ENABLED="0"
 NO_STACKED_COMMENTS_ENABLED="0"
+RULE_STATE_READY="0"
+RULE_LEG001_ENABLED="0"
+RULE_LEG016_ENABLED="0"
+RULE_LEG017_ENABLED="0"
+RULE_LEG024_ENABLED="0"
+RULE_LEG025_ENABLED="0"
+RULE_LEG026_ENABLED="0"
+RULE_LEG035_ENABLED="0"
+RULE_LEG039_ENABLED="0"
+RULE_LEG040_ENABLED="0"
+RULE_STATEFUL_ENABLED="0"
+ANY_LINE_RULES_ENABLED="0"
+ALL_LINE_RULES_ENABLED="0"
 COMMENT_PARSER_IN_SINGLE_QUOTE="0"
 COMMENT_PARSER_IN_ANSI_C_QUOTE="0"
 LAST_COMMENT_LINE="0"
@@ -28,12 +41,16 @@ SHELL_COMMAND_PAREN_DEPTHS=()
 SHELL_CONTEXT_TYPES=()
 SHELL_CASE_STATES=()
 SHELL_SCAN_ESCAPED="0"
+SHELL_QUOTE_SCAN_SLOW="0"
 SHELL_CODE=""
 SHELL_CODE_SOURCE=""
+NORMALIZED_CODE_LINE=""
+EXPRESSION_OPERATOR_COUNT="0"
 SHELL_LINE_STARTED_QUOTED="0"
 
 lint_files() {
   local file
+  prepare_rule_state
   prepare_comment_rule_state
   [[ "${#FILES[@]}" -gt 0 ]] || return
   for file in "${FILES[@]}"; do
@@ -43,9 +60,77 @@ lint_files() {
 
 lint_file() {
   local path="${1:-}"
+  ensure_rule_state
+  ensure_comment_rule_state
   reset_scan_state "$path"
   check_file_rules "$path"
+  [[ "$RULE_STATEFUL_ENABLED$ANY_LINE_RULES_ENABLED$COMMENT_RULES_ENABLED" != "000" ]] || return
   scan_file_lines "$path"
+}
+
+invalidate_rule_state() {
+  RULE_STATE_READY="0"
+}
+
+prepare_rule_state() {
+  RULE_STATE_READY="0"
+  prepare_file_rule_state
+  prepare_line_rule_state
+  prepare_stateful_rule_state
+  RULE_STATE_READY="1"
+}
+
+ensure_rule_state() {
+  [[ "$RULE_STATE_READY" == "1" ]] && return
+  prepare_rule_state
+}
+
+prepare_file_rule_state() {
+  RULE_LEG016_ENABLED="0"
+  RULE_LEG025_ENABLED="0"
+  RULE_LEG026_ENABLED="0"
+  rule_enabled "LEG016" && RULE_LEG016_ENABLED="1"
+  rule_enabled "LEG025" && RULE_LEG025_ENABLED="1"
+  rule_enabled "LEG026" && RULE_LEG026_ENABLED="1"
+}
+
+prepare_line_rule_state() {
+  ANY_LINE_RULES_ENABLED="0"
+  ALL_LINE_RULES_ENABLED="0"
+  RULE_LEG001_ENABLED="0"
+  RULE_LEG017_ENABLED="0"
+  RULE_LEG024_ENABLED="0"
+  RULE_LEG035_ENABLED="0"
+  RULE_LEG039_ENABLED="0"
+  RULE_LEG040_ENABLED="0"
+  prepare_first_line_rule_flags
+  prepare_last_line_rule_flags
+}
+
+prepare_first_line_rule_flags() {
+  rule_enabled "LEG001" && RULE_LEG001_ENABLED="1"
+  rule_enabled "LEG017" && RULE_LEG017_ENABLED="1"
+  rule_enabled "LEG024" && RULE_LEG024_ENABLED="1"
+}
+
+prepare_last_line_rule_flags() {
+  rule_enabled "LEG035" && RULE_LEG035_ENABLED="1"
+  rule_enabled "LEG039" && RULE_LEG039_ENABLED="1"
+  rule_enabled "LEG040" && RULE_LEG040_ENABLED="1"
+  [[ "$RULE_LEG001_ENABLED$RULE_LEG017_ENABLED$RULE_LEG024_ENABLED$RULE_LEG035_ENABLED$RULE_LEG039_ENABLED$RULE_LEG040_ENABLED" == "111111" ]] && ALL_LINE_RULES_ENABLED="1"
+  [[ "$RULE_LEG001_ENABLED$RULE_LEG017_ENABLED$RULE_LEG024_ENABLED$RULE_LEG035_ENABLED$RULE_LEG039_ENABLED$RULE_LEG040_ENABLED" != "000000" ]] && ANY_LINE_RULES_ENABLED="1"
+}
+
+prepare_stateful_rule_state() {
+  RULE_STATEFUL_ENABLED="0"
+  rule_enabled "LEG002" && RULE_STATEFUL_ENABLED="1"
+  rule_enabled "LEG003" && RULE_STATEFUL_ENABLED="1"
+  rule_enabled "LEG005" && RULE_STATEFUL_ENABLED="1"
+  rule_enabled "LEG009" && RULE_STATEFUL_ENABLED="1"
+  rule_enabled "LEG010" && RULE_STATEFUL_ENABLED="1"
+  rule_enabled "LEG034" && RULE_STATEFUL_ENABLED="1"
+  rule_enabled "LEG038" && RULE_STATEFUL_ENABLED="1"
+  [[ "$RULE_LEG039_ENABLED$RULE_LEG040_ENABLED" != "00" ]] && RULE_STATEFUL_ENABLED="1"
 }
 
 reset_scan_state() {
@@ -107,9 +192,10 @@ reset_comment_syntax_state() {
 
 check_file_rules() {
   local path="${1:-}"
-  check_require_executable_shebang "$path" "1" ""
-  check_require_filename_matches_dirname "$path" "1" ""
-  check_no_mixed_filename_casing "$path" "1" ""
+  ensure_rule_state
+  [[ "$RULE_LEG016_ENABLED" == "1" ]] && check_require_executable_shebang "$path" "1" ""
+  [[ "$RULE_LEG025_ENABLED" == "1" ]] && check_require_filename_matches_dirname "$path" "1" ""
+  [[ "$RULE_LEG026_ENABLED" == "1" ]] && check_no_mixed_filename_casing "$path" "1" ""
 }
 
 scan_file_lines() {
@@ -136,9 +222,10 @@ scan_line() {
   local line
   CURRENT_LINE_TEXT="$raw_line"
   comment_policy_consumes_line "$path" "$line_number" "$raw_line" && return
-  line="$(normalized_code_line "$raw_line")"
-  [[ -z "$(trim "$SHELL_CODE")" ]] && return
-  [[ "$SHELL_LINE_STARTED_QUOTED" == "1" ]] && line="$(trim "$SHELL_CODE")"
+  normalized_code_line "$raw_line"
+  line="$NORMALIZED_CODE_LINE"
+  [[ "$SHELL_CODE" == *[![:space:]]* ]] || return
+  [[ "$SHELL_LINE_STARTED_QUOTED" == "1" ]] && trim_into line "$SHELL_CODE"
   SHELL_CODE_SOURCE="$line"
   run_line_checks "$path" "$line_number" "$line"
 }
@@ -146,11 +233,12 @@ scan_line() {
 normalized_code_line() {
   local line="${1:-}"
   [[ "$SHELL_COMMENT_FOUND" == "1" ]] && line="${line:0:SHELL_COMMENT_INDEX}"
-  trim "$line"
+  trim_into NORMALIZED_CODE_LINE "$line"
 }
 
 invalidate_comment_rule_state() {
   COMMENT_RULE_STATE_READY="0"
+  invalidate_rule_state
 }
 
 prepare_comment_rule_state() {
@@ -223,30 +311,149 @@ scan_shell_comment_line() {
   local line="${1:-}"
   local index char
   reset_shell_comment_line_state
+  shell_line_scan_fast "$line" && return
+  shell_line_scan_simple_quotes "$line" && return
   for ((index = 0; index < ${#line}; index += SHELL_SCAN_WIDTH)); do
-    char="${line:index:1}"
-    shell_syntax_consumed "$line" "$index" "$char" && continue
-    queue_heredoc_at "$line" "$index"
-    if shell_comment_starts_at "$line" "$index" "$char" "$SHELL_IN_SINGLE_QUOTE" "$SHELL_IN_DOUBLE_QUOTE"; then
-      record_shell_comment "$index"
-      return
-    fi
+    char="${line:index:1}" SHELL_SCAN_WIDTH="1"
+    [[ "$SHELL_SCAN_ESCAPED" == "1" ]] && shell_scan_consumes_escaped && SHELL_CODE+="x" && continue
+    [[ "$SHELL_QUOTE_SCAN_SLOW" == "0" && "$SHELL_IN_SINGLE_QUOTE$SHELL_IN_DOUBLE_QUOTE" != "00" ]] && skip_simple_quoted_content "$line" "$index" && continue
+    case "$char" in
+      \\ | "'" | '"' | '`') shell_syntax_consumed "$line" "$index" "$char" && continue ;;
+      '$' | '(' | ')' | c) shell_syntax_consumed "$line" "$index" "$char" && continue ;;
+      i | e | ';' | '&') shell_syntax_consumed "$line" "$index" "$char" && continue ;;
+    esac
+    [[ "$char" == "<" ]] && queue_heredoc_at "$line" "$index"
+    [[ "$char" == "#" ]] && shell_comment_starts_at "$line" "$index" "$char" "$SHELL_IN_SINGLE_QUOTE" "$SHELL_IN_DOUBLE_QUOTE" && record_shell_comment "$index" && return
     append_shell_code "$char"
   done
+}
+
+skip_simple_quoted_content() {
+  local line="${1:-}" index="${2:-0}" quote rest prefix
+  [[ "$SHELL_IN_DOUBLE_QUOTE" == "1" ]] && quote='"' || quote="'"
+  rest="${line:index}"
+  prefix="${rest%%$quote*}"
+  if quoted_prefix_needs_scan "$prefix"; then
+    SHELL_QUOTE_SCAN_SLOW="1"
+    return 1
+  fi
+  SHELL_SCAN_WIDTH="${#prefix}"
+  [[ "$prefix" == "$rest" ]] && return 0
+  SHELL_SCAN_WIDTH=$((SHELL_SCAN_WIDTH + 1))
+  SHELL_IN_SINGLE_QUOTE="0"
+  SHELL_IN_DOUBLE_QUOTE="0"
+  SHELL_IN_ANSI_C_QUOTE="0"
+}
+
+quoted_prefix_needs_scan() {
+  local prefix="${1:-}"
+  if [[ "$SHELL_IN_DOUBLE_QUOTE" == "1" ]]; then
+    case "$prefix" in
+      *\\* | *'$('* | *'`'*) return 0 ;;
+    esac
+  elif [[ "$SHELL_IN_ANSI_C_QUOTE" == "1" ]]; then
+    [[ "$prefix" == *\\* ]] && return 0
+  fi
+  return 1
+}
+
+shell_line_scan_fast() {
+  local line="${1:-}" prefix
+  [[ "$SHELL_IN_SINGLE_QUOTE$SHELL_IN_DOUBLE_QUOTE" == "00" ]] || return 1
+  [[ "${#SHELL_CASE_STATES[@]}" -eq 0 ]] || return 1
+  [[ "${#SHELL_CONTEXT_TYPES[@]}" -eq 0 ]] || return 1
+  case "$line" in
+    *\\* | *"'"* | *'"'*) return 1 ;;
+    *'`'* | *'$('* | *'<<'*) return 1 ;;
+  esac
+  [[ "$line" == *case* ]] && [[ "$line" =~ (^|[^[:alnum:]_])case([^[:alnum:]_]|$) ]] && return 1
+  prefix="${line%%#*}"
+  if [[ "$prefix" != "$line" ]]; then
+    comment_start_allowed "$line" "${#prefix}" || return 1
+    SHELL_COMMENT_FOUND="1"
+    SHELL_COMMENT_INDEX="${#prefix}"
+  fi
+  SHELL_CODE="$prefix"
+}
+
+shell_line_scan_simple_quotes() {
+  local line="${1:-}" rest prefix quote tail quoted code=""
+  simple_quote_scan_supported "$line" || return 1
+  rest="$line"
+  while simple_quote_remains "$rest"; do
+    split_at_simple_quote "$rest"
+    prefix="$SIMPLE_QUOTE_PREFIX"
+    quote="$SIMPLE_QUOTE_CHAR"
+    tail="$SIMPLE_QUOTE_TAIL"
+    simple_quote_content "$quote" "$tail" || return 1
+    quoted="$SIMPLE_QUOTE_CONTENT"
+    code+="${prefix}x"
+    rest="${tail:$((${#quoted} + 1))}"
+  done
+  SHELL_CODE="$code$rest"
+}
+
+simple_quote_scan_supported() {
+  local line="${1:-}"
+  case "$line" in
+    *\"* | *\'*) ;;
+    *) return 1 ;;
+  esac
+  [[ "$SHELL_IN_SINGLE_QUOTE$SHELL_IN_DOUBLE_QUOTE" == "00" ]] || return 1
+  [[ "${#SHELL_CASE_STATES[@]}" -eq 0 ]] || return 1
+  [[ "${#SHELL_CONTEXT_TYPES[@]}" -eq 0 ]] || return 1
+  case "$line" in
+    *\\* | *'`'* | *'$('* | *'<<'* | *'#'*) return 1 ;;
+  esac
+  [[ "$line" == *case* ]] && [[ "$line" =~ (^|[^[:alnum:]_])case([^[:alnum:]_]|$) ]] && return 1
+  return 0
+}
+
+simple_quote_remains() {
+  case "${1:-}" in
+    *\"* | *\'*) return 0 ;;
+  esac
+  return 1
+}
+
+split_at_simple_quote() {
+  local rest="${1:-}" double_prefix single_prefix
+  double_prefix="${rest%%\"*}"
+  single_prefix="${rest%%\'*}"
+  if ((${#double_prefix} < ${#single_prefix})); then
+    SIMPLE_QUOTE_PREFIX="$double_prefix"
+    SIMPLE_QUOTE_CHAR='"'
+    SIMPLE_QUOTE_TAIL="${rest:$((${#double_prefix} + 1))}"
+  else
+    SIMPLE_QUOTE_PREFIX="$single_prefix"
+    SIMPLE_QUOTE_CHAR="'"
+    SIMPLE_QUOTE_TAIL="${rest:$((${#single_prefix} + 1))}"
+  fi
+}
+
+simple_quote_content() {
+  local quote="${1:-}" tail="${2:-}" content
+  if [[ "$quote" == '"' ]]; then
+    content="${tail%%\"*}"
+  else
+    content="${tail%%\'*}"
+  fi
+  [[ "$content" != "$tail" ]] || return 1
+  SIMPLE_QUOTE_CONTENT="$content"
 }
 
 shell_syntax_consumed() {
   local line="${1:-}" index="${2:-0}" char="${3:-}"
   SHELL_SCAN_WIDTH="1"
-  shell_scan_consumes_escaped && SHELL_CODE+="x" && return 0
   shell_scan_starts_escape "$char" && SHELL_CODE+="x" && return 0
   shell_command_substitution_opens "$line" "$index" && SHELL_CODE+=" ( " && SHELL_SCAN_WIDTH="2" && return 0
   shell_backtick_substitution_consumed "$char" && return 0
   shell_scan_toggles_quote "$line" "$index" "$char" && record_shell_quote && return 0
-  update_shell_case_state "$line" "$index"
+  case "$char" in
+    c | i | e | ';' | '&') update_shell_case_state "$line" "$index" ;;
+  esac
   shell_case_arm_parenthesis_consumed "$char" && SHELL_CODE+=") " && return 0
-  shell_command_parenthesis_consumed "$char" && SHELL_CODE+="$char" && return 0
-  return 1
+  shell_command_parenthesis_consumed "$char" && SHELL_CODE+="$char"
 }
 
 reset_shell_comment_line_state() {
@@ -257,6 +464,7 @@ reset_shell_comment_line_state() {
   SHELL_COMMENT_FOUND="0"
   SHELL_COMMENT_INDEX="0"
   SHELL_SCAN_ESCAPED="0"
+  SHELL_QUOTE_SCAN_SLOW="0"
 }
 
 record_shell_quote() {
@@ -622,23 +830,34 @@ run_line_checks() {
   local path="${1:-}"
   local line_number="${2:-}"
   local line="${3:-}"
-  remember_function_body_start "$line_number"
-  reset_guard_candidate "$line"
-  close_completed_blocks "$line"
+  ensure_rule_state
+  if [[ "$RULE_STATEFUL_ENABLED" == "1" ]]; then
+    remember_function_body_start "$line_number"
+    reset_guard_candidate "$line"
+    close_completed_blocks "$line"
+  fi
   run_stateless_line_checks "$path" "$line_number" "$line"
+  [[ "$RULE_STATEFUL_ENABLED" == "1" ]] || return
   update_state_from_line "$path" "$line_number" "$line"
 }
 
 run_stateless_line_checks() {
-  local path="${1:-}"
-  local line_number="${2:-}"
-  local line="${3:-}"
-  check_max_expression_operators "$path" "$line_number" "$line"
-  check_prefer_object_lookup "$path" "$line_number" "$line"
-  check_no_direct_shell_bin_smoke "$path" "$line_number" "$line"
-  check_no_bool_literal_args "$path" "$line_number" "$line"
-  check_prefer_functions "$path" "$line_number" "$line"
-  check_use_defaults_in_functions "$path" "$line_number" "$line"
+  local path="${1:-}" line_number="${2:-}" line="${3:-}"
+  if [[ "$ALL_LINE_RULES_ENABLED" == "1" ]]; then
+    check_max_expression_operators "$path" "$line_number" "$line"
+    check_prefer_object_lookup "$path" "$line_number" "$line"
+    check_no_direct_shell_bin_smoke "$path" "$line_number" "$line"
+    check_no_bool_literal_args "$path" "$line_number" "$line"
+    check_prefer_functions "$path" "$line_number" "$line"
+    check_use_defaults_in_functions "$path" "$line_number" "$line"
+    return
+  fi
+  [[ "$RULE_LEG001_ENABLED" == "1" ]] && check_max_expression_operators "$path" "$line_number" "$line"
+  [[ "$RULE_LEG024_ENABLED" == "1" ]] && check_prefer_object_lookup "$path" "$line_number" "$line"
+  [[ "$RULE_LEG017_ENABLED" == "1" ]] && check_no_direct_shell_bin_smoke "$path" "$line_number" "$line"
+  [[ "$RULE_LEG035_ENABLED" == "1" ]] && check_no_bool_literal_args "$path" "$line_number" "$line"
+  [[ "$RULE_LEG039_ENABLED" == "1" ]] && check_prefer_functions "$path" "$line_number" "$line"
+  [[ "$RULE_LEG040_ENABLED" == "1" ]] && check_use_defaults_in_functions "$path" "$line_number" "$line"
 }
 
 update_state_from_line() {
@@ -690,16 +909,17 @@ maybe_open_function() {
   local line="${3:-}"
   [[ "$IN_FUNCTION" == "0" ]] || return
   maybe_open_pending_function "$path" "$line_number" "$line" && return
-  is_function_open "$line" || maybe_remember_pending_function "$line_number" "$line"
-  is_function_open "$line" || return
-  remember_function_name "$line"
-  handle_inline_function "$path" "$line_number" "$line" && return
-  IN_FUNCTION="1"
-  FUNCTION_START_LINE="$line_number"
-  FUNCTION_BODY_START_LINE="0"
-  FUNCTION_CONTROL_DEPTH="$CONTROL_FLOW_DEPTH"
-  FUNCTION_LOOP_DEPTH="$LOOP_DEPTH"
-  FUNCTION_IF_DEPTH="$IF_DEPTH"
+  if is_function_open "$line"; then
+    remember_function_name "$line"
+    handle_inline_function "$path" "$line_number" "$line" && return
+    IN_FUNCTION="1"
+    FUNCTION_START_LINE="$line_number"
+    FUNCTION_BODY_START_LINE="0"
+    FUNCTION_CONTROL_DEPTH="$CONTROL_FLOW_DEPTH"
+    FUNCTION_LOOP_DEPTH="$LOOP_DEPTH"
+    FUNCTION_IF_DEPTH="$IF_DEPTH"
+  fi
+  maybe_remember_pending_function "$line_number" "$line"
 }
 
 maybe_open_pending_function() {
@@ -755,6 +975,9 @@ maybe_close_function() {
 
 is_function_open() {
   local line="${1:-}"
+  if [[ "$line" != *'{'* ]]; then
+    return 1
+  fi
   [[ "$line" =~ ^(function[[:space:]]+)?[A-Za-z_][A-Za-z0-9_:-]*[[:space:]]*(\(\))?[[:space:]]*\{ ]]
 }
 
@@ -1111,7 +1334,15 @@ update_exit_state() {
 
 command_exits() {
   local line="${1:-}"
-  line="$(shell_code "$line")"
+  case "$line" in
+    *return* | *exit* | *break* | *continue*) ;;
+    *) return 1 ;;
+  esac
+  if [[ "$line" == "$SHELL_CODE_SOURCE" ]]; then
+    line="$SHELL_CODE"
+  else
+    line="$(shell_code "$line")"
+  fi
   command_code_exits "$line" "$((LOOP_DEPTH > 0))"
 }
 
@@ -1360,9 +1591,14 @@ check_max_expression_operators() {
   local path="${1:-$SCAN_PATH}"
   local line_number="${2:-$SCAN_LINE_NUMBER}"
   local expression="${3:-$CURRENT_LINE_TEXT}"
+  case "$expression" in
+    *'&'* | *'|'*) ;;
+    *) return ;;
+  esac
   line_starts_control "$expression" && return
   local count
-  count="$(count_expression_operators "$expression")"
+  count_expression_operators "$expression" > /dev/null
+  count="$EXPRESSION_OPERATOR_COUNT"
   ((count <= MAX_EXPRESSION_OPERATORS)) && return
   report_max_expression_operators "$path" "$line_number" "$count"
 }
@@ -1482,7 +1718,12 @@ check_no_direct_shell_bin_smoke() {
   local line_number="${2:-$SCAN_LINE_NUMBER}"
   local line="${3:-$CURRENT_LINE_TEXT}"
   local shell entry
-  shell="$(first_word "$line")"
+  case "$line" in
+    bash[[:space:]]* | sh[[:space:]]* | zsh[[:space:]]* | ksh[[:space:]]*) ;;
+    */bash[[:space:]]* | */sh[[:space:]]* | */zsh[[:space:]]* | */ksh[[:space:]]*) ;;
+    *) return ;;
+  esac
+  read -r shell _ <<< "$line"
   shell_runtime_allowed "$shell" || return
   entry="$(direct_entry_from_line "$line")"
   [[ -z "$entry" ]] && return
@@ -1503,11 +1744,13 @@ check_prefer_object_lookup() {
   local path="${1:-$SCAN_PATH}"
   local line_number="${2:-$SCAN_LINE_NUMBER}"
   local line="${3:-$CURRENT_LINE_TEXT}"
-  local count name
-  name="$(comparison_left_name "$line")"
+  local occurrences name
+  [[ "$line" == *'='* ]] || return
+  comparison_left_name_into "$line" || return
+  name="$COMPARISON_LEFT_NAME"
   [[ -z "$name" ]] && return
-  count="$(count_occurrences "$line" "$name")"
-  ((count < MIN_OBJECT_LOOKUP_CHAIN_LENGTH)) && return
+  count_occurrences_into occurrences "$line" "$name"
+  ((occurrences < MIN_OBJECT_LOOKUP_CHAIN_LENGTH)) && return
   local message
   message="Replace repeated $name equality checks with a case statement or lookup."
   add_diag "$path" "$line_number" "1" "LEG024" "$message"
@@ -1558,6 +1801,10 @@ check_no_bool_literal_args() {
   local path="${1:-$SCAN_PATH}"
   local line_number="${2:-$SCAN_LINE_NUMBER}"
   local line="${3:-$CURRENT_LINE_TEXT}"
+  case "$line" in
+    *true* | *false*) ;;
+    *) return ;;
+  esac
   has_bool_literal_arg "$line" || return
   local message
   message="Avoid boolean literal arguments. Name the option before passing it."
@@ -1595,7 +1842,9 @@ check_use_defaults_in_functions() {
   local line_number="${2:-$SCAN_LINE_NUMBER}"
   local line="${3:-$CURRENT_LINE_TEXT}"
   local scoped_line
-  scoped_line="$(function_scoped_line "$line")" || return
+  [[ "$line" == *'$'* ]] || return
+  function_scoped_line "$line" || return
+  scoped_line="$FUNCTION_SCOPED_LINE"
   has_unguarded_arg_assignment "$scoped_line" || return
   local message
   message="Use a default or required-argument expansion when binding positional parameters inside functions."
@@ -1864,8 +2113,13 @@ phrase_present() {
 
 function_scoped_line() {
   local line="${1:-}"
-  [[ "$IN_FUNCTION" == "1" ]] && printf '%s\n' "$line" && return
-  [[ "$PENDING_FUNCTION_DECLARATION" == "1" ]] && brace_opening_body "$line" && return
+  if [[ "$IN_FUNCTION" == "1" ]]; then
+    FUNCTION_SCOPED_LINE="$line"
+    return 0
+  fi
+  if [[ "$PENDING_FUNCTION_DECLARATION" == "1" ]]; then
+    brace_opening_body "$line" && return 0
+  fi
   function_opening_body "$line"
 }
 
@@ -1880,7 +2134,7 @@ brace_opening_body() {
   [[ "$line" == *"{"* ]] || return 1
   line="${line#*\{}"
   [[ "$line" == *"}"* ]] && line="${line%\}*}"
-  printf '%s\n' "$line"
+  FUNCTION_SCOPED_LINE="$line"
 }
 
 handle_inline_function() {
@@ -1979,22 +2233,16 @@ has_unguarded_arg_assignment() {
   local line="${1:-}"
   local segment
   local -a segments
-  line="$(command_list_segments "$line")"
-  IFS=';' read -r -a segments <<< "$line"
-  [[ "${#segments[@]}" -gt 0 ]] || return 1
-  for segment in "${segments[@]}"; do
-    segment="$(trim "$segment")"
-    assignment_segment_uses_unguarded_arg "$segment" && return 0
-  done
-  return 1
-}
-
-command_list_segments() {
-  local line="${1:-}"
   line="${line//&&/;}"
   line="${line//||/;}"
   line="${line//|/;}"
-  printf '%s\n' "$line"
+  IFS=';' read -r -a segments <<< "$line"
+  [[ "${#segments[@]}" -gt 0 ]] || return 1
+  for segment in "${segments[@]}"; do
+    trim_into segment "$segment"
+    assignment_segment_uses_unguarded_arg "$segment" && return 0
+  done
+  return 1
 }
 
 assignment_segment_uses_unguarded_arg() {
@@ -2012,7 +2260,7 @@ binding_assignment_segment() {
 declaration_assignment_segment() {
   local segment="${1:-}"
   local command
-  command="$(first_word "$segment")"
+  read -r command _ <<< "$segment"
   [[ "$segment" == *=* ]] || return 1
   declaration_command_supported "$command" || return 1
   declaration_has_global_option "$segment" && return 1
@@ -2268,13 +2516,19 @@ identifier_boundary_char() {
 
 condition_text() {
   local line="${1:-}"
+  condition_text_into "$line"
+  printf '%s\n' "$CONDITION_TEXT"
+}
+
+condition_text_into() {
+  local line="${1:-}"
   line="${line#if }"
   line="${line#elif }"
   line="${line#while }"
   line="${line#until }"
   line="${line%; then*}"
   line="${line%; do*}"
-  printf '%s\n' "$line"
+  CONDITION_TEXT="$line"
 }
 
 count_condition_operators() {
@@ -2290,21 +2544,29 @@ count_condition_operators() {
 
 count_expression_operators() {
   local line="${1:-}"
-  local pipe_line count
-  line="$(shell_code "$line")"
+  local pipe_line count occurrences
+  if [[ "$line" == "$SHELL_CODE_SOURCE" ]]; then
+    line="$SHELL_CODE"
+  else
+    line="$(shell_code "$line")"
+  fi
   pipe_line="${line//||/}"
   pipe_line="${pipe_line//|&/}"
   count="0"
-  count=$((count + $(count_occurrences "$line" "&&")))
-  count=$((count + $(count_occurrences "$line" "||")))
-  count=$((count + $(count_occurrences "$pipe_line" "|")))
+  count_occurrences_into occurrences "$line" "&&"
+  count=$((count + occurrences))
+  count_occurrences_into occurrences "$line" "||"
+  count=$((count + occurrences))
+  count_occurrences_into occurrences "$pipe_line" "|"
+  count=$((count + occurrences))
+  EXPRESSION_OPERATOR_COUNT="$count"
   printf '%s\n' "$count"
 }
 
 line_starts_control() {
   local line="${1:-}"
   local word
-  word="$(first_word "$line")"
+  read -r word _ <<< "$line"
   control_word "$word"
 }
 
@@ -2317,18 +2579,29 @@ control_word() {
 
 comparison_left_name() {
   local line="${1:-}"
-  local condition
-  condition="$(condition_text "$line")"
-  comparison_left_name_from_condition "$condition"
+  comparison_left_name_into "$line" || return
+  printf '%s\n' "$COMPARISON_LEFT_NAME"
+}
+
+comparison_left_name_into() {
+  local line="${1:-}"
+  COMPARISON_LEFT_NAME=""
+  condition_text_into "$line"
+  comparison_left_name_from_condition_into "$CONDITION_TEXT"
 }
 
 comparison_left_name_from_condition() {
+  comparison_left_name_from_condition_into "${1:-}" || return
+  printf '%s\n' "$COMPARISON_LEFT_NAME"
+}
+
+comparison_left_name_from_condition_into() {
   local condition="${1:-}"
   local opener left operator
   read -r opener left operator _ <<< "$condition"
   comparison_opener_supported "$opener" || return
   comparison_operator_supported "$operator" || return
-  printf '%s\n' "$left"
+  COMPARISON_LEFT_NAME="$left"
 }
 
 comparison_opener_supported() {
@@ -2497,7 +2770,8 @@ has_bool_literal_arg() {
   local word
   local BOOL_EXPECT_COMMAND="1" BOOL_SKIP_ARG="0"
   local tokens=()
-  line="$(normalize_boolean_argument_line "$line")"
+  normalize_boolean_argument_line_into "$line"
+  line="$NORMALIZED_BOOLEAN_ARGUMENT_LINE"
   read -r -a tokens <<< "$line"
   for word in "${tokens[@]}"; do
     bool_literal_token "$word" && return 0
@@ -2506,8 +2780,23 @@ has_bool_literal_arg() {
 }
 
 normalize_boolean_argument_line() {
+  normalize_boolean_argument_line_into "${1:-}"
+  printf '%s\n' "$NORMALIZED_BOOLEAN_ARGUMENT_LINE"
+}
+
+normalize_boolean_argument_line_into() {
   local line
-  line="$(shell_code "${1:-}")"
+  line="${1:-}"
+  if [[ "$line" == "$SHELL_CODE_SOURCE" ]]; then
+    line="$SHELL_CODE"
+  else
+    line="$(shell_code "$line")"
+  fi
+  normalize_boolean_redirections_into "$line"
+}
+
+normalize_boolean_redirections_into() {
+  local line="${1:-}"
   line="${line//<<</ __REDIRECTION__ }"
   line="${line//<<-/ __REDIRECTION__ }"
   line="${line//<</ __REDIRECTION__ }"
@@ -2519,7 +2808,7 @@ normalize_boolean_argument_line() {
   line="${line//>/ __REDIRECTION__ }"
   line="${line//</ __REDIRECTION__ }"
   line="${line//[;&|()]/ ; }"
-  printf '%s\n' "$line"
+  NORMALIZED_BOOLEAN_ARGUMENT_LINE="$line"
 }
 
 bool_literal_token() {

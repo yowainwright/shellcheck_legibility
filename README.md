@@ -615,8 +615,17 @@ check_no_stacked_comments "example.sh" "5" "# Second comment."
 
 ## Tests
 
+Install the repository's pre-commit hook once per clone:
+
+```sh
+make install-hooks
+```
+
+The setup script installs `.git/hooks/pre-commit`, preserves unmanaged hooks, and skips CI. The hook runs ShellCheck, shfmt, unit tests, system Bash compatibility, and configured legibility checks for staged files. `make check` runs the full-repository legibility scan and Docker end-to-end tests too.
+
 ```sh
 make unit
 make e2e
+make pre-commit
 make check
 ```

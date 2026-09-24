@@ -76,16 +76,14 @@ shell_shebang() {
 shell_runtime_allowed() {
   local command="${1:-}"
   local runtime
-  command="$(shell_runtime_name "$command")"
+  trim_into command "$command"
+  command="${command#/usr/bin/env }"
+  while [[ "$command" == */ ]]; do
+    command="${command%/}"
+  done
+  command="${command##*/}"
   for runtime in "${EXECUTABLE_RUNTIMES[@]}"; do
     [[ "$command" == "$runtime" ]] && return 0
   done
   return 1
-}
-
-shell_runtime_name() {
-  local command="${1:-}"
-  command="$(trim "$command")"
-  command="${command#/usr/bin/env }"
-  printf '%s\n' "$(basename -- "$command")"
 }

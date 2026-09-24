@@ -5,10 +5,17 @@ PARSED_LIST=()
 YAML_DECODED_ESCAPE=""
 YAML_ESCAPE_WIDTH="0"
 
+trim_into() {
+  local output="${1:?}"
+  local trimmed="${2:-}"
+  trimmed="${trimmed#"${trimmed%%[![:space:]]*}"}"
+  trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+  printf -v "$output" '%s' "$trimmed"
+}
+
 trim() {
   local value="${1:-}"
-  value="${value#"${value%%[![:space:]]*}"}"
-  value="${value%"${value##*[![:space:]]}"}"
+  trim_into value "$value"
   printf '%s\n' "$value"
 }
 
@@ -235,6 +242,18 @@ count_occurrences() {
     count=$((count + 1))
   done
   printf '%s\n' "$count"
+}
+
+count_occurrences_into() {
+  local output="${1:?}"
+  local text="${2:-}"
+  local needle="${3:-}"
+  local count="0"
+  while [[ "$text" == *"$needle"* ]]; do
+    text="${text#*"$needle"}"
+    count=$((count + 1))
+  done
+  printf -v "$output" '%s' "$count"
 }
 
 json_escape() {
