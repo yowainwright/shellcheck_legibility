@@ -1204,7 +1204,7 @@ command_words_exit() {
   for word in "$@"; do
     consume_command_exit_word "$word" "$include_loop_exits" && return 0
   done
-  apply_exit_command "$COMMAND_EXIT_OPERATOR" "$include_loop_exits" "${COMMAND_EXIT_WORDS[@]}"
+  apply_exit_command "$COMMAND_EXIT_OPERATOR" "$include_loop_exits" ${COMMAND_EXIT_WORDS[@]+"${COMMAND_EXIT_WORDS[@]}"}
 }
 
 reset_command_exit_state() {
@@ -1295,7 +1295,7 @@ prepare_command_boundary() {
 
 complete_command_boundary() {
   local include_loop_exits="${1:-0}"
-  if apply_exit_command "$COMMAND_EXIT_OPERATOR" "$include_loop_exits" "${COMMAND_EXIT_WORDS[@]}"; then
+  if apply_exit_command "$COMMAND_EXIT_OPERATOR" "$include_loop_exits" ${COMMAND_EXIT_WORDS[@]+"${COMMAND_EXIT_WORDS[@]}"}; then
     COMMAND_EXIT_EARLY="1"
     return 0
   fi
