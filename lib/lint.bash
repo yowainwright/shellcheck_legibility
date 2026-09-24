@@ -1058,13 +1058,13 @@ command_words_exit() {
       __PIPE__) command=("__PIPELINE__"); skip_pipeline="1"; continue ;;
       __BACKGROUND__)
         command=("__BACKGROUND__")
-        apply_exit_command "$operator" "$include_loop_exits" "${command[@]}" && return 0
+        apply_exit_command "$operator" "$include_loop_exits" ${command[@]+"${command[@]}"} && return 0
         operator="__SEQUENCE__"
         command=()
         continue
         ;;
       __SEQUENCE__|__AND__|__OR__)
-        apply_exit_command "$operator" "$include_loop_exits" "${command[@]}" && return 0
+        apply_exit_command "$operator" "$include_loop_exits" ${command[@]+"${command[@]}"} && return 0
         operator="$word"
         command=()
         continue
@@ -1072,7 +1072,7 @@ command_words_exit() {
     esac
     command+=("$word")
   done
-  apply_exit_command "$operator" "$include_loop_exits" "${command[@]}"
+  apply_exit_command "$operator" "$include_loop_exits" ${command[@]+"${command[@]}"}
 }
 
 apply_exit_command() {

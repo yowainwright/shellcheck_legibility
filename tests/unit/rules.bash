@@ -910,6 +910,26 @@ test_shell_syntax_regressions() {
   test_inline_wrapped_function_reported
   test_inline_exit_guard_allowed
   test_inline_conditional_tail_allowed
+  test_exit_parser_empty_commands
+  test_exit_parser_preserves_exit_commands
+}
+
+test_exit_parser_empty_commands() {
+  reset_test_state
+  local line
+  for line in 'work;' '(return)' '(work); work' 'work &' 'work || return'; do
+    command_code_exits "$line"
+    assert_equal "1" "$?"
+  done
+}
+
+test_exit_parser_preserves_exit_commands() {
+  reset_test_state
+  local line
+  for line in 'return;' '(work); return' 'work; exit 1' 'work && return || exit'; do
+    command_code_exits "$line"
+    assert_equal "0" "$?"
+  done
 }
 
 test_inline_conditionals_close() {
