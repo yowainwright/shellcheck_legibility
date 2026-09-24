@@ -7,6 +7,8 @@ main() {
   assert_version
   assert_text_diagnostic
   assert_json_diagnostic
+  assert_no_false_positives
+  assert_boolean_argument_reported
   printf '%s\n' "ok"
 }
 
@@ -55,6 +57,27 @@ run_linter() {
 fail() {
   printf '%s\n' "${1:-}" >&2
   exit 1
+}
+
+assert_no_false_positives() {
+  mkdir -p sample/scripts
+  printf '%s\n' '#!/usr/bin/env bash' 'run() {' \
+    'if ready; then' 'return 0' 'fi' \
+    "printf '%s\\n' 'true false a|b|c|d|e|f'" \
+    'work || true' '}' 'run' > sample/scripts/index.sh
+  OUTPUT="$(shellcheck-legibility check sample/scripts/index.sh --output-format json)"
+  STATUS="$?"
+  [[ "$STATUS" -eq 0 ]] || fail "expected quoted data and guard clauses to pass: $OUTPUT"
+  local normalized="${OUTPUT//[[:space:]]/}"
+  [[ "$normalized" == "[]" ]] || fail "expected no diagnostics: $OUTPUT"
+}
+
+assert_boolean_argument_reported() {
+  printf '%s\n' '#!/usr/bin/env bash' 'run() { create_user true; }' 'run' > sample/scripts/boolean.sh
+  OUTPUT="$(shellcheck-legibility check sample/scripts/boolean.sh --select LEG035 --output-format json)"
+  STATUS="$?"
+  [[ "$STATUS" -eq 1 ]] || fail "expected a boolean argument diagnostic"
+  [[ "$OUTPUT" == *'"code":"LEG035"'* ]] || fail "expected LEG035 in JSON output"
 }
 
 main "$@"

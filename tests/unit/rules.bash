@@ -30,6 +30,8 @@ main() {
   test_function_rules
   test_comment_rules
   test_config_formats
+  test_false_positive_regressions
+  test_shell_syntax_regressions
   printf '%s\n' "ok"
 }
 
@@ -789,6 +791,280 @@ assert_equal() {
 fail() {
   printf '%s\n' "${1:-}" >&2
   exit 1
+}
+
+test_false_positive_regressions() {
+  test_guard_clause_allowed
+  test_exit_guard_allowed
+  test_wrapped_function_reported
+  test_nested_guard_keeps_outer_diagnostic
+  test_optional_branch_allowed
+  test_bool_commands_allowed
+  test_bool_argument_still_reported
+  test_script_filename_policy_preserved
+  test_component_filename_still_reported
+  test_literal_operators_allowed
+  test_heredoc_is_not_shell_syntax
+  test_real_function_lines_still_reported
+}
+
+scan_fixture() {
+  local line number=0
+  for line in "$@"; do
+    number=$((number + 1))
+    scan_line "example.sh" "$number" "$line"
+  done
+}
+
+test_guard_clause_allowed() {
+  reset_test_state
+  SELECT=("LEG010")
+  scan_fixture 'run() {' 'if ready; then' 'return 0' 'fi' 'work' '}'
+  assert_no_diagnostics
+}
+
+test_wrapped_function_reported() {
+  reset_test_state
+  SELECT=("LEG010")
+  scan_fixture 'run() {' 'if ready; then' 'build' 'upload' 'fi' '}'
+  assert_has_code "LEG010"
+  assert_equal "2" "${DIAG_LINES[0]}"
+}
+
+test_optional_branch_allowed() {
+  reset_test_state
+  SELECT=("LEG010")
+  scan_fixture 'run() {' 'if verbose; then' 'log' 'fi' 'work' '}'
+  assert_no_diagnostics
+}
+
+test_bool_commands_allowed() {
+  reset_test_state
+  SELECT=("LEG035")
+  scan_fixture 'run || true' 'false || recover' 'run && false' 'command true'
+  scan_fixture 'output="$(run || true)"' "printf '%s\\n' 'some true text'"
+  assert_no_diagnostics
+}
+
+test_bool_argument_still_reported() {
+  reset_test_state
+  SELECT=("LEG035")
+  scan_fixture 'run || create_user true'
+  assert_has_code "LEG035"
+}
+
+test_script_filename_policy_preserved() {
+  reset_test_state
+  SELECT=("LEG025")
+  check_require_filename_matches_dirname "tests/e2e/scripts/test-security.sh" "1"
+  assert_has_code "LEG025"
+}
+
+test_component_filename_still_reported() {
+  reset_test_state
+  SELECT=("LEG025")
+  check_require_filename_matches_dirname "src/deploy/release/unrelated.sh" "1"
+  assert_has_code "LEG025"
+}
+
+test_literal_operators_allowed() {
+  reset_test_state
+  SELECT=("LEG001" "LEG002")
+  MAX_EXPRESSION_OPERATORS=0
+  MAX_CONDITION_OPERATORS=0
+  scan_fixture "printf '%s\\n' 'one|two|three || four && five'"
+  scan_fixture 'if grep -q "a || b && c" file; then' 'work' 'fi'
+  assert_no_diagnostics
+}
+
+test_heredoc_is_not_shell_syntax() {
+  reset_test_state
+  SELECT=("LEG001" "LEG002" "LEG035")
+  MAX_EXPRESSION_OPERATORS=0
+  scan_fixture 'write() {' "cat <<'EOF'" 'true false || &&' '}' 'if data; then' 'EOF' '}'
+  assert_no_diagnostics
+  assert_equal "0" "$IN_FUNCTION"
+}
+
+test_real_function_lines_still_reported() {
+  reset_test_state
+  SELECT=("LEG038")
+  MAX_FUNCTION_LINES=4
+  scan_fixture 'run() {' 'first' 'second' 'third' '}'
+  assert_has_code "LEG038"
+}
+
+test_shell_syntax_regressions() {
+  test_optional_final_branch_allowed
+  test_alternate_branches_allowed
+  test_guard_directive_uses_opening_line
+  test_case_patterns_are_not_pipelines
+  test_shell_operators_still_reported
+  test_multiline_literal_is_not_shell_code
+  test_real_case_pipeline_still_reported
+  test_bool_command_boundaries
+  test_bool_after_quoted_arg_reported
+  test_physical_function_lines_preserved
+  test_heredoc_function_lines_preserved
+  test_inline_conditionals_close
+  test_inline_wrapped_function_reported
+  test_inline_exit_guard_allowed
+  test_inline_conditional_tail_allowed
+  test_exit_parser_empty_commands
+  test_exit_parser_preserves_exit_commands
+}
+
+test_exit_parser_empty_commands() {
+  reset_test_state
+  local line
+  for line in 'work;' '(return)' '(work); work' 'work &' 'work || return'; do
+    command_code_exits "$line"
+    assert_equal "1" "$?"
+  done
+}
+
+test_exit_parser_preserves_exit_commands() {
+  reset_test_state
+  local line
+  for line in 'return;' '(work); return' 'work; exit 1' 'work && return || exit'; do
+    command_code_exits "$line"
+    assert_equal "0" "$?"
+  done
+}
+
+test_inline_conditionals_close() {
+  reset_test_state
+  SELECT=("LEG003")
+  MAX_CONTROL_FLOW_DEPTH=2
+  scan_fixture 'if ready; then work; fi' 'if ready; then if enabled; then work; fi; fi'
+  scan_fixture 'if ready; then' 'work' 'fi'
+  assert_equal "0" "$IF_DEPTH"
+  assert_equal "0" "$CONTROL_FLOW_DEPTH"
+  assert_no_diagnostics
+}
+
+test_inline_wrapped_function_reported() {
+  reset_test_state
+  SELECT=("LEG010")
+  scan_fixture 'run() {' 'if ready; then work; fi' '}'
+  assert_has_code "LEG010"
+  assert_equal "2" "${DIAG_LINES[0]}"
+}
+
+test_inline_exit_guard_allowed() {
+  reset_test_state
+  SELECT=("LEG010")
+  scan_fixture 'run() {' 'if failed; then return 1; fi' '}'
+  assert_no_diagnostics
+}
+
+test_inline_conditional_tail_allowed() {
+  reset_test_state
+  SELECT=("LEG010")
+  scan_fixture 'run() {' 'if ready; then work; fi; finish' '}'
+  assert_no_diagnostics
+}
+
+test_optional_final_branch_allowed() {
+  reset_test_state
+  SELECT=("LEG010")
+  scan_fixture 'run() {' 'work' 'if verbose; then' 'log' 'fi' '}'
+  assert_no_diagnostics
+}
+
+test_alternate_branches_allowed() {
+  reset_test_state
+  SELECT=("LEG010")
+  scan_fixture 'run() {' 'if ready; then' 'work' 'else' 'exit 1' 'fi' '}'
+  assert_no_diagnostics
+}
+
+test_guard_directive_uses_opening_line() {
+  reset_test_state
+  SELECT=("LEG010")
+  scan_fixture 'run() {' 'if ready; then # noqa: LEG010' 'work' 'fi' '}'
+  assert_no_diagnostics
+}
+
+test_case_patterns_are_not_pipelines() {
+  reset_test_state
+  SELECT=("LEG001" "LEG035")
+  MAX_EXPRESSION_OPERATORS=0
+  scan_fixture 'case "$answer" in' 'true | false | yes | no)' 'work ;;' 'esac'
+  assert_no_diagnostics
+}
+
+test_shell_operators_still_reported() {
+  reset_test_state
+  SELECT=("LEG001" "LEG002")
+  MAX_EXPRESSION_OPERATORS=0
+  MAX_CONDITION_OPERATORS=0
+  scan_fixture 'value="$(first && second)"'
+  assert_has_code "LEG001"
+  scan_fixture 'if ! ready; then' 'work' 'fi'
+  assert_has_code "LEG002"
+}
+
+test_multiline_literal_is_not_shell_code() {
+  reset_test_state
+  SELECT=("LEG001" "LEG002" "LEG035")
+  scan_fixture 'run() {' "node -e '" 'if (ready && true) {' 'return false;' '}' "'" '}'
+  assert_no_diagnostics
+}
+
+test_real_case_pipeline_still_reported() {
+  reset_test_state
+  SELECT=("LEG001")
+  MAX_EXPRESSION_OPERATORS=0
+  scan_fixture 'case "$answer" in' 'yes | no) first | second ;;' 'esac'
+  assert_has_code "LEG001"
+}
+
+test_bool_command_boundaries() {
+  reset_test_state
+  SELECT=("LEG035")
+  scan_fixture '{ true; }' 'if true; then' 'command -v true' 'fi' 'run > true'
+  assert_no_diagnostics
+}
+
+test_bool_after_quoted_arg_reported() {
+  reset_test_state
+  SELECT=("LEG035")
+  scan_fixture 'create_user "$name" false'
+  assert_has_code "LEG035"
+}
+
+test_physical_function_lines_preserved() {
+  reset_test_state
+  SELECT=("LEG038")
+  MAX_FUNCTION_LINES=3
+  scan_fixture 'run() {' '# context' '' 'work' '# context' '}'
+  assert_has_code "LEG038"
+  assert_equal "Function has 6 lines (max 3). Extract focused helper functions." "${DIAG_MESSAGES[0]}"
+}
+
+test_exit_guard_allowed() {
+  reset_test_state
+  SELECT=("LEG010")
+  scan_fixture 'run() {' 'if failed; then' 'exit 1' 'fi' '}'
+  assert_no_diagnostics
+}
+
+test_nested_guard_keeps_outer_diagnostic() {
+  reset_test_state
+  SELECT=("LEG010")
+  scan_fixture 'run() {' 'if ready; then' 'if failed; then' 'return 1' 'fi' 'work' 'fi' '}'
+  assert_has_code "LEG010"
+  assert_equal "2" "${DIAG_LINES[0]}"
+}
+
+test_heredoc_function_lines_preserved() {
+  reset_test_state
+  SELECT=("LEG038")
+  MAX_FUNCTION_LINES=4
+  scan_fixture 'write() {' "cat <<'EOF'" 'data' '}' 'more data' 'EOF' '}'
+  assert_has_code "LEG038"
+  assert_equal "Function has 7 lines (max 4). Extract focused helper functions." "${DIAG_MESSAGES[0]}"
 }
 
 main "$@"
