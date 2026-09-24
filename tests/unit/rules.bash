@@ -913,8 +913,15 @@ test_shell_syntax_regressions() {
   test_inline_wrapped_function_reported
   test_inline_exit_guard_allowed
   test_inline_conditional_tail_allowed
+  test_early_return_regressions
   test_exit_parser_empty_commands
   test_exit_parser_preserves_exit_commands
+}
+
+test_early_return_regressions() {
+  test_inline_elif_else_does_not_report_early_return
+  test_multiline_elif_else_does_not_report_early_return
+  test_simple_else_after_exit_reports_early_return
 }
 
 test_exit_parser_empty_commands() {
@@ -966,6 +973,27 @@ test_inline_conditional_tail_allowed() {
   SELECT=("LEG010")
   scan_fixture 'run() {' 'if ready; then work; fi; finish' '}'
   assert_no_diagnostics
+}
+
+test_inline_elif_else_does_not_report_early_return() {
+  reset_test_state
+  SELECT=("LEG009")
+  scan_fixture 'run() {' 'if x; then return; elif y; then work; else other; fi' '}'
+  assert_no_diagnostics
+}
+
+test_multiline_elif_else_does_not_report_early_return() {
+  reset_test_state
+  SELECT=("LEG009")
+  scan_fixture 'run() {' 'if x; then' 'return' 'elif y; then' 'work' 'else' 'other' 'fi' '}'
+  assert_no_diagnostics
+}
+
+test_simple_else_after_exit_reports_early_return() {
+  reset_test_state
+  SELECT=("LEG009")
+  scan_fixture 'run() {' 'if x; then return; else other; fi' '}'
+  assert_has_code "LEG009"
 }
 
 test_optional_final_branch_allowed() {

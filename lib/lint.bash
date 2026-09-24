@@ -879,16 +879,17 @@ handle_if_line() {
 
 complete_inline_if() {
   local path="${1:-}" line_number="${2:-}" line="${3:-}" analysis flags branch
-  local has_else="0" then_branch_exits="0"
+  local has_else="0" has_elif="0" then_branch_exits="0"
   analysis="$(inline_if_analysis "$line")" || return 1
   flags="${analysis%%$'\n'*}"
   branch="${analysis#*$'\n'}"
   [[ "${flags:0:1}" == "1" ]] && IF_HAS_ALTERNATE[IF_DEPTH]="1"
   [[ "${flags:2:1}" == "1" ]] && has_else="1"
+  [[ "${flags:3:1}" == "1" ]] && has_elif="1"
   command_code_exits "$branch" && then_branch_exits="1"
   if [[ "$then_branch_exits" == "1" ]]; then
     IF_THEN_EXIT[IF_DEPTH]="1"
-    [[ "$has_else" == "1" ]] && report_prefer_early_return "$path" "$line_number"
+    [[ "$has_else$has_elif" == "10" ]] && report_prefer_early_return "$path" "$line_number"
   fi
   close_if_block
   [[ "${flags:1:1}" == "1" ]] && reset_guard_candidate "$line"
@@ -903,7 +904,7 @@ inline_if_analysis() {
     consume_inline_if_word "$word"
   done
   inline_if_analysis_complete || return 1
-  printf '%s\n%s\n' "$INLINE_ANALYSIS_ALTERNATE$INLINE_ANALYSIS_TAIL$INLINE_ANALYSIS_HAS_ELSE" "$INLINE_ANALYSIS_BRANCH"
+  printf '%s\n%s\n' "$INLINE_ANALYSIS_ALTERNATE$INLINE_ANALYSIS_TAIL$INLINE_ANALYSIS_HAS_ELSE$INLINE_ANALYSIS_HAS_ELIF" "$INLINE_ANALYSIS_BRANCH"
 }
 
 prepare_inline_if_words() {
@@ -922,6 +923,7 @@ reset_inline_if_analysis() {
   INLINE_ANALYSIS_ALTERNATE="0"
   INLINE_ANALYSIS_TAIL="0"
   INLINE_ANALYSIS_HAS_ELSE="0"
+  INLINE_ANALYSIS_HAS_ELIF="0"
   INLINE_ANALYSIS_IF_COUNT="0"
   INLINE_ANALYSIS_FI_COUNT="0"
   INLINE_ANALYSIS_BRANCH=""
@@ -991,6 +993,7 @@ consume_inline_if_alternate() {
   if ((INLINE_ANALYSIS_DEPTH == 1)); then
     INLINE_ANALYSIS_ALTERNATE="1"
     [[ "$word" == "else" ]] && INLINE_ANALYSIS_HAS_ELSE="1"
+    [[ "$word" == "elif" ]] && INLINE_ANALYSIS_HAS_ELIF="1"
     INLINE_ANALYSIS_COLLECTING="0"
     return 0
   fi
@@ -1418,6 +1421,8 @@ check_prefer_early_return() {
   local line_number="${2:-$SCAN_LINE_NUMBER}"
   local line="${3:-$CURRENT_LINE_TEXT}"
   [[ "$line" == else* ]] || return
+  ((IF_DEPTH > 0)) || return
+  [[ "${IF_HAS_ALTERNATE[IF_DEPTH]:-0}" == "0" ]] || return
   report_prefer_early_return "$path" "$line_number"
 }
 
