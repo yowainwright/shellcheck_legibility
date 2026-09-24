@@ -231,7 +231,7 @@ shell_syntax_consumed() {
   shell_scan_consumes_escaped && SHELL_CODE+="x" && return 0
   shell_scan_starts_escape "$char" && SHELL_CODE+="x" && return 0
   shell_command_substitution_opens "$line" "$index" && SHELL_CODE+=" ( " && SHELL_SCAN_WIDTH="2" && return 0
-  shell_backtick_substitution_consumed "$char" && SHELL_CODE+=" ; " && return 0
+  shell_backtick_substitution_consumed "$char" && return 0
   shell_scan_toggles_quote "$line" "$index" "$char" && record_shell_quote && return 0
   update_shell_case_state "$line" "$index"
   shell_case_arm_parenthesis_consumed "$char" && SHELL_CODE+=") " && return 0
@@ -307,8 +307,13 @@ shell_backtick_substitution_consumed() {
   [[ "$char" == '`' ]] || return 1
   [[ "$SHELL_IN_SINGLE_QUOTE" == "0" ]] || return 1
   last=$((${#SHELL_CONTEXT_TYPES[@]} - 1))
-  backtick_context_open "$last" && close_shell_context "$last" && return
+  if backtick_context_open "$last"; then
+    close_shell_context "$last"
+    SHELL_CODE+=" ) "
+    return 0
+  fi
   open_shell_context "backtick" "0"
+  SHELL_CODE+=" ( "
 }
 
 backtick_context_open() {
@@ -833,6 +838,76 @@ handle_if_line() {
   [[ "$line" == if[[:space:]]* ]] || return
   check_hoist_if_operators "$path" "$line_number" "$line"
   open_if_block "$path" "$line_number" "$line"
+  complete_inline_if "$line" || return 0
+}
+
+complete_inline_if() {
+  local line="${1:-}" analysis flags branch
+  analysis="$(inline_if_analysis "$line")" || return 1
+  IFS=$'\n' read -r flags branch <<< "$analysis"
+  [[ "${flags:0:1}" == "1" ]] && IF_HAS_ALTERNATE[IF_DEPTH]="1"
+  command_code_exits "$branch" && IF_THEN_EXIT[IF_DEPTH]="1"
+  close_if_block
+  [[ "${flags:1:1}" == "1" ]] && reset_guard_candidate "$line"
+  return 0
+}
+
+inline_if_analysis() {
+  local line="${1:-}" word collecting="0" expecting_command="1" paren_depth="0" inline_depth="0"
+  local found_fi="0" alternate="0" tail="0" if_count="0" fi_count="0" branch=""
+  local words=()
+  line="$(shell_code "$line")"
+  line="${line//;/ ; }"
+  read -r -a words <<< "$line"
+  for word in "${words[@]}"; do
+    case "$word" in
+      "(") paren_depth=$((paren_depth + 1)); [[ "$collecting" == "1" ]] && branch+="( "; continue ;;
+      ")") paren_depth=$((paren_depth - 1)); [[ "$collecting" == "1" ]] && branch+=") "; continue ;;
+    esac
+    (( paren_depth == 0 )) || { [[ "$collecting" == "1" ]] && branch+="$word "; continue; }
+    if [[ "$found_fi" == "1" ]]; then
+      [[ "$word" == ";" ]] || tail="1"
+      continue
+    fi
+    if [[ "$word" == "if" && "$expecting_command" == "1" ]]; then
+      if_count=$((if_count + 1))
+      inline_depth=$((inline_depth + 1))
+    fi
+    [[ "$word" == "then" && "$expecting_command" == "1" ]] && collecting="1" && expecting_command="1" && continue
+    if [[ "$expecting_command" == "1" ]]; then
+      case "$word" in
+        else|elif)
+          if (( inline_depth == 1 )); then
+            alternate="1"
+            collecting="0"
+          else
+            [[ "$collecting" == "1" ]] && branch+="$word "
+          fi
+          continue
+          ;;
+      esac
+    fi
+    if [[ "$word" == "fi" && "$expecting_command" == "1" ]]; then
+      if (( inline_depth > 1 )); then
+        inline_depth=$((inline_depth - 1))
+        [[ "$collecting" == "1" ]] && branch+="fi "
+        expecting_command="0"
+        continue
+      fi
+      fi_count=$((fi_count + 1))
+      found_fi="1"
+      continue
+    fi
+    if [[ "$word" == ";" ]]; then
+      [[ "$collecting" == "1" ]] && branch+="; "
+      expecting_command="1"
+      continue
+    fi
+    [[ "$collecting" == "1" ]] && branch+="$word "
+    expecting_command="0"
+  done
+  (( if_count > 0 && inline_depth == 0 && fi_count == 1 )) || return 1
+  printf '%s\n%s\n' "$alternate$tail" "$branch"
 }
 
 open_if_block() {
@@ -906,11 +981,12 @@ update_exit_state() {
 command_exits() {
   local line="${1:-}"
   line="$(shell_code "$line")"
-  command_code_exits "$line"
+  command_code_exits "$line" "$((LOOP_DEPTH > 0))"
 }
 
 command_code_exits() {
   local line="${1:-}"
+  local include_loop_exits="${2:-0}"
   local words=()
   line_has_control_keyword "$line" && return 1
   line="${line//&&/ __AND__ }"
@@ -918,28 +994,48 @@ command_code_exits() {
   line="${line//;/ __SEQUENCE__ }"
   line="${line//|/ __PIPE__ }"
   line="${line//&/ __BACKGROUND__ }"
-  [[ "$line" == *__PIPE__* || "$line" == *__BACKGROUND__* ]] && return 1
   line="${line//\(/ ( }"
   line="${line//\)/ ) }"
   read -r -a words <<< "$line"
-  command_words_exit "${words[@]}"
+  command_words_exit "$include_loop_exits" "${words[@]}"
 }
 
 line_has_control_keyword() {
   local line="${1:-}"
-  local word
+  local word expecting_command="1" paren_depth="0"
   local words=()
+  line="${line//&&/ __AND__ }"
+  line="${line//||/ __OR__ }"
+  line="${line//;/ __SEQUENCE__ }"
+  line="${line//|/ __PIPE__ }"
+  line="${line//&/ __BACKGROUND__ }"
   read -r -a words <<< "$line"
   for word in "${words[@]}"; do
     case "$word" in
-      if|then|elif|else|fi|while|until|for|select|do|done|case|'esac') return 0 ;;
+      "(") paren_depth=$((paren_depth + 1)); continue ;;
+      ")") paren_depth=$((paren_depth - 1)); continue ;;
     esac
+    (( paren_depth == 0 )) || continue
+    case "$word" in
+      __SEQUENCE__|__AND__|__OR__|__PIPE__|__BACKGROUND__) expecting_command="1"; continue ;;
+    esac
+    [[ "$expecting_command" == "1" ]] || continue
+    case "$word" in
+      if|then|elif|else|fi|while|until|for|select|do|done|case|'esac') return 0 ;;
+      !) continue ;;
+    esac
+    [[ "$word" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] && continue
+    expecting_command="0"
   done
   return 1
 }
 
 command_words_exit() {
-  local word paren_depth="0" expecting_command="1" guaranteed_command="1"
+  local include_loop_exits="${1:-0}"
+  local word paren_depth="0" operator="__FIRST__" skip_pipeline="0"
+  local COMMAND_EXIT_SUCCESS="1" COMMAND_EXIT_FAILURE="1"
+  local command=()
+  shift
   for word in "$@"; do
     case "$word" in
       "(") paren_depth=$((paren_depth + 1)); continue ;;
@@ -949,24 +1045,85 @@ command_words_exit() {
         ;;
       esac
     (( paren_depth == 0 )) || continue
+    if [[ "$skip_pipeline" == "1" ]]; then
+      case "$word" in
+        __PIPE__) continue ;;
+        __SEQUENCE__|__AND__|__OR__|__BACKGROUND__) skip_pipeline="0" ;;
+        *) continue ;;
+      esac
+    fi
     case "$word" in
-      __SEQUENCE__) expecting_command="1"; guaranteed_command="1"; continue ;;
-      __AND__|__OR__|__PIPE__|__BACKGROUND__)
-        expecting_command="1"
-        guaranteed_command="0"
+      __PIPE__) command=("__PIPELINE__"); skip_pipeline="1"; continue ;;
+      __BACKGROUND__)
+        command=("__BACKGROUND__")
+        apply_exit_command "$operator" "$include_loop_exits" "${command[@]}" && return 0
+        operator="__SEQUENCE__"
+        command=()
+        continue
+        ;;
+      __SEQUENCE__|__AND__|__OR__)
+        apply_exit_command "$operator" "$include_loop_exits" "${command[@]}" && return 0
+        operator="$word"
+        command=()
         continue
         ;;
     esac
-    [[ "$expecting_command" == "1" ]] || continue
-    command_prefix_token "$word" && continue
-    if [[ "$word" == "return" || "$word" == "exit" ]]; then
-      [[ "$guaranteed_command" == "1" ]] && return 0
-      expecting_command="0"
-      continue
-    fi
-    expecting_command="0"
+    command+=("$word")
+  done
+  apply_exit_command "$operator" "$include_loop_exits" "${command[@]}"
+}
+
+apply_exit_command() {
+  local operator="${1:-}" include_loop_exits="${2:-0}" exits="0"
+  shift 2
+  simple_command_exits "$include_loop_exits" "$@" && exits="1"
+  case "$operator" in
+    __FIRST__|__SEQUENCE__) apply_sequential_exit "$operator" "$exits" ;;
+    __AND__) apply_and_exit "$exits" ;;
+    __OR__) apply_or_exit "$exits" ;;
+  esac
+  [[ "$COMMAND_EXIT_SUCCESS$COMMAND_EXIT_FAILURE" == "00" ]]
+}
+
+apply_sequential_exit() {
+  local operator="${1:-}" exits="${2:-0}"
+  [[ "$operator" == "__SEQUENCE__" && "$COMMAND_EXIT_SUCCESS$COMMAND_EXIT_FAILURE" == "00" ]] && return 0
+  COMMAND_EXIT_SUCCESS="$((1 - exits))"
+  COMMAND_EXIT_FAILURE="$((1 - exits))"
+}
+
+apply_and_exit() {
+  local exits="${1:-0}"
+  [[ "$COMMAND_EXIT_SUCCESS" == "1" ]] || return 0
+  COMMAND_EXIT_SUCCESS="$((1 - exits))"
+  [[ "$exits" == "1" ]] || COMMAND_EXIT_FAILURE="1"
+}
+
+apply_or_exit() {
+  local exits="${1:-0}"
+  [[ "$COMMAND_EXIT_FAILURE" == "1" ]] || return 0
+  COMMAND_EXIT_FAILURE="$((1 - exits))"
+  [[ "$exits" == "1" ]] || COMMAND_EXIT_SUCCESS="1"
+}
+
+simple_command_exits() {
+  local include_loop_exits="${1:-0}" word
+  shift
+  for word in "$@"; do
+    exit_command_prefix_token "$word" && continue
+    [[ "$word" == "return" || "$word" == "exit" ]] && return 0
+    [[ "$include_loop_exits" == "1" && ( "$word" == "break" || "$word" == "continue" ) ]] && return 0
+    return 1
   done
   return 1
+}
+
+exit_command_prefix_token() {
+  local word="${1:-}"
+  case "$word" in
+    command|builtin|exec|time|!|-*) return 0 ;;
+  esac
+  [[ "$word" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]
 }
 
 check_max_expression_operators() {
@@ -2112,9 +2269,17 @@ has_bool_literal_arg() {
   local BOOL_EXPECT_COMMAND="1" BOOL_SKIP_ARG="0"
   local tokens=()
   line="$(shell_code "$line")"
+  line="${line//<<</ __REDIRECTION__ }"
+  line="${line//<<-/ __REDIRECTION__ }"
+  line="${line//<</ __REDIRECTION__ }"
+  line="${line//>>/ __REDIRECTION__ }"
+  line="${line//>&/ __REDIRECTION__ }"
+  line="${line//>|/ __REDIRECTION__ }"
+  line="${line//<&/ __REDIRECTION__ }"
+  line="${line//<>/ __REDIRECTION__ }"
+  line="${line//>/ __REDIRECTION__ }"
+  line="${line//</ __REDIRECTION__ }"
   line="${line//[;&|()]/ ; }"
-  line="${line//>/ > }"
-  line="${line//</ < }"
   read -r -a tokens <<< "$line"
   for word in "${tokens[@]}"; do
     bool_literal_token "$word" && return 0
@@ -2130,7 +2295,7 @@ bool_literal_token() {
   fi
   case "$word" in
     ";"|"{"|"}") BOOL_EXPECT_COMMAND="1"; return 1 ;;
-    ">"|"<") BOOL_SKIP_ARG="1"; return 1 ;;
+    __REDIRECTION__) BOOL_SKIP_ARG="1"; return 1 ;;
   esac
   if [[ "$BOOL_EXPECT_COMMAND" == "1" ]]; then
     command_prefix_token "$word" || BOOL_EXPECT_COMMAND="0"
