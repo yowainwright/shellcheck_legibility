@@ -906,6 +906,43 @@ test_shell_syntax_regressions() {
   test_bool_after_quoted_arg_reported
   test_physical_function_lines_preserved
   test_heredoc_function_lines_preserved
+  test_inline_conditionals_close
+  test_inline_wrapped_function_reported
+  test_inline_exit_guard_allowed
+  test_inline_conditional_tail_allowed
+}
+
+test_inline_conditionals_close() {
+  reset_test_state
+  SELECT=("LEG003")
+  MAX_CONTROL_FLOW_DEPTH=2
+  scan_fixture 'if ready; then work; fi' 'if ready; then if enabled; then work; fi; fi'
+  scan_fixture 'if ready; then' 'work' 'fi'
+  assert_equal "0" "$IF_DEPTH"
+  assert_equal "0" "$CONTROL_FLOW_DEPTH"
+  assert_no_diagnostics
+}
+
+test_inline_wrapped_function_reported() {
+  reset_test_state
+  SELECT=("LEG010")
+  scan_fixture 'run() {' 'if ready; then work; fi' '}'
+  assert_has_code "LEG010"
+  assert_equal "2" "${DIAG_LINES[0]}"
+}
+
+test_inline_exit_guard_allowed() {
+  reset_test_state
+  SELECT=("LEG010")
+  scan_fixture 'run() {' 'if failed; then return 1; fi' '}'
+  assert_no_diagnostics
+}
+
+test_inline_conditional_tail_allowed() {
+  reset_test_state
+  SELECT=("LEG010")
+  scan_fixture 'run() {' 'if ready; then work; fi; finish' '}'
+  assert_no_diagnostics
 }
 
 test_optional_final_branch_allowed() {

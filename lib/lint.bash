@@ -844,7 +844,8 @@ handle_if_line() {
 complete_inline_if() {
   local line="${1:-}" analysis flags branch
   analysis="$(inline_if_analysis "$line")" || return 1
-  IFS=$'\n' read -r flags branch <<< "$analysis"
+  flags="${analysis%%$'\n'*}"
+  branch="${analysis#*$'\n'}"
   [[ "${flags:0:1}" == "1" ]] && IF_HAS_ALTERNATE[IF_DEPTH]="1"
   command_code_exits "$branch" && IF_THEN_EXIT[IF_DEPTH]="1"
   close_if_block
@@ -894,6 +895,7 @@ inline_if_analysis() {
         expecting_command="0"
         continue
       fi
+      inline_depth=$((inline_depth - 1))
       fi_count=$((fi_count + 1))
       found_fi="1"
       continue
