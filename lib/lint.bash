@@ -221,7 +221,7 @@ scan_line() {
   local raw_line="${3:-}"
   local line
   CURRENT_LINE_TEXT="$raw_line"
-  [[ "$raw_line" == *[![:space:]]* || "${#HEREDOC_DELIMITERS[@]}" -gt 0 ]] || return
+  [[ "$raw_line" == *[![:space:]]* || "${#HEREDOC_DELIMITERS[@]}" -gt 0 || "${#PENDING_HEREDOC_DELIMITERS[@]}" -gt 0 ]] || return
   comment_policy_consumes_line "$path" "$line_number" "$raw_line" && return
   normalized_code_line "$raw_line"
   line="$NORMALIZED_CODE_LINE"
@@ -870,7 +870,7 @@ run_stateless_line_checks() {
 update_state_from_line() {
   local path="${1:-$SCAN_PATH}" line_number="${2:-$SCAN_LINE_NUMBER}" line="${3:-}"
   if [[ "$IN_FUNCTION" == "1" ]]; then
-    [[ "$line" == "}" ]] && update_function_state "$path" "$line_number" "$line"
+    function_close_line "$line" && update_function_state "$path" "$line_number" "$line"
   elif [[ "$PENDING_FUNCTION_DECLARATION" == "1" ]]; then
     update_function_state "$path" "$line_number" "$line"
   else
@@ -981,13 +981,19 @@ maybe_close_function() {
   local line_number="${2:-}"
   local line="${3:-}"
   [[ "$IN_FUNCTION" == "1" ]] || return
-  [[ "$line" == "}" ]] || return
+  function_close_line "$line" || return
   check_prefer_guard_clauses "$path"
   check_max_function_lines "$path" "$FUNCTION_START_LINE" "$line_number"
   CONTROL_FLOW_DEPTH="$FUNCTION_CONTROL_DEPTH"
   LOOP_DEPTH="$FUNCTION_LOOP_DEPTH"
   IF_DEPTH="$FUNCTION_IF_DEPTH"
   IN_FUNCTION="0"
+}
+
+function_close_line() {
+  local line="${1:-}"
+  line="${line//[[:space:]]/}"
+  [[ "$line" == "}" || "$line" == "};" ]]
 }
 
 is_function_open() {
