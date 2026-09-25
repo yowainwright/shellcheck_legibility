@@ -639,3 +639,10 @@ make check
 git tag -a v0.2.5 -m "Release v0.2.5"
 git push origin v0.2.5
 ```
+
+### Retry Homebrew
+
+```sh
+gh workflow run release.yml --ref main -f tag=v0.2.5
+gh run watch
+```
