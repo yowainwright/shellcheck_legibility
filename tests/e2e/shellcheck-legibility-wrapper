@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-
-main() {
-  exec /opt/shellcheck-legibility/bin/shellcheck-legibility "$@"
-}
-
-main "$@"

@@ -1,4 +1,4 @@
-package app
+package main
 
 import (
 	"crypto/sha256"
@@ -16,6 +16,7 @@ type resultCache struct {
 }
 type cacheEntry struct {
 	Key         string
+	Digest      string
 	Diagnostics []lint.Diagnostic
 }
 
@@ -41,7 +42,7 @@ func newCache(dir string, config lint.Config) resultCache {
 	return resultCache{dir, hash.Sum(nil)}
 }
 
-func (c resultCache) key(path string, data []byte) string {
+func (c resultCache) key(path string) string {
 	if c.dir == "" {
 		return ""
 	}
@@ -52,11 +53,15 @@ func (c resultCache) key(path string, data []byte) string {
 	hash := sha256.New()
 	hash.Write(c.context)
 	hash.Write([]byte(absolute + "\x00" + path + "\x00"))
-	hash.Write(data)
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
-func (c resultCache) read(key string) ([]lint.Diagnostic, bool) {
+func contentDigest(data []byte) string {
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:])
+}
+
+func (c resultCache) read(key string, source []byte) ([]lint.Diagnostic, bool) {
 	if key == "" {
 		return nil, false
 	}
@@ -65,13 +70,13 @@ func (c resultCache) read(key string) ([]lint.Diagnostic, bool) {
 		return nil, false
 	}
 	var entry cacheEntry
-	if json.Unmarshal(data, &entry) != nil || entry.Key != key || entry.Diagnostics == nil {
+	if json.Unmarshal(data, &entry) != nil || entry.Key != key || entry.Digest != contentDigest(source) || entry.Diagnostics == nil {
 		return nil, false
 	}
 	return entry.Diagnostics, true
 }
 
-func (c resultCache) write(key string, diagnostics []lint.Diagnostic) {
+func (c resultCache) write(key string, source []byte, diagnostics []lint.Diagnostic) {
 	if key == "" {
 		return
 	}
@@ -83,7 +88,7 @@ func (c resultCache) write(key string, diagnostics []lint.Diagnostic) {
 	if diagnostics == nil {
 		diagnostics = []lint.Diagnostic{}
 	}
-	err = json.NewEncoder(file).Encode(cacheEntry{key, diagnostics})
+	err = json.NewEncoder(file).Encode(cacheEntry{key, contentDigest(source), diagnostics})
 	closeError := file.Close()
 	if err != nil || closeError != nil {
 		return

@@ -45,7 +45,7 @@ write_bundle() {
   mkdir -p "$GOCACHE" "$GOTMPDIR"
   CGO_ENABLED=0 GOOS="${target%-*}" GOARCH="${target#*-}" \
     go -C "$ROOT_DIR" build -buildvcs=false -trimpath \
-    -ldflags "-s -w -X main.version=$version" -o "$bundle_path" .
+    -ldflags "-s -w -X main.version=$version" -o "$bundle_path" ./cmd/shellcheck-legibility
 }
 
 validate_bundle() {

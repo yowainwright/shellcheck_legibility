@@ -1,4 +1,4 @@
-package app
+package main
 
 import (
 	"encoding/json"
@@ -14,7 +14,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-func loadConfig(options *Options) (lint.Config, error) {
+func loadConfig(options *cliOptions) (lint.Config, error) {
 	config := lint.DefaultConfig()
 	path := options.Config
 	if path == "" {
