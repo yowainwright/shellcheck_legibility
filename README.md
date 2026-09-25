@@ -629,3 +629,13 @@ make e2e
 make pre-commit
 make check
 ```
+
+## Publishing
+
+```sh
+git switch main
+git pull --ff-only
+make check
+git tag -a v0.2.5 -m "Release v0.2.5"
+git push origin v0.2.5
+```
