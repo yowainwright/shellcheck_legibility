@@ -32,6 +32,8 @@ parse_one_arg() {
     --config | --output-format | --select | --ignore) parse_option_value "$@" ;;
     --config=* | --output-format=* | --select=* | --ignore=*) parse_inline_option "${1:-}" ;;
     --exit-zero) EXIT_ZERO="1" ;;
+    --cache) CACHE_DIR="${CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/shellcheck-legibility}" ;;
+    --no-cache) CACHE_DIR="" ;;
     --version)
       printf '%s\n' "$VERSION"
       exit 0
@@ -75,6 +77,9 @@ unknown_option() {
 
 usage() {
   printf '%s\n' "Usage: shellcheck-legibility check [paths...] [options]"
+  printf '%s\n' '  --cache       Reuse results for unchanged files and rules.'
+  printf '%s\n' '  --no-cache    Check every file, ignoring the session cache.'
+  printf '%s\n' '  SHELLCHECK_LEGIBILITY_CACHE_DIR sets and enables the cache directory.'
 }
 
 apply_cli_overrides() {

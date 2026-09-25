@@ -47,6 +47,7 @@ init_defaults() {
 add_default_excludes() {
   EXCLUDE+=(".git")
   EXCLUDE+=(".beads")
+  EXCLUDE+=(".build")
   EXCLUDE+=("node_modules")
   EXCLUDE+=("vendor")
 }

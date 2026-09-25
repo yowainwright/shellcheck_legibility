@@ -19,7 +19,7 @@ Shell legibility checks that sit beside ShellCheck.
 
 ShellCheck should own correctness, portability, quoting, and shell semantics. This project focuses on reviewability: control-flow depth, operator-heavy expressions, long functions, function-first script shape, defaulted function args, repeated comparisons, direct shell smoke tests, and patterns that make scripts harder to scan.
 
-Requires Bash. ShellCheck is a development lint dependency, not a runtime dependency.
+Releases include a native Go engine using [mvdan's shell parser](https://github.com/mvdan/sh). Bash remains the compatibility scanner for incomplete or unsupported shell syntax. ShellCheck is a development lint dependency, not a runtime dependency.
 
 ## Install
 
@@ -27,6 +27,20 @@ Requires Bash. ShellCheck is a development lint dependency, not a runtime depend
 brew tap yowainwright/tap
 brew install yowainwright/tap/shellcheck-legibility
 ```
+
+## Agent sessions
+
+Enable the cache in the shell that starts your agent. Existing lint hooks inherit it:
+
+```sh
+export SHELLCHECK_LEGIBILITY_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/shellcheck-legibility"
+```
+
+Unchanged files replay their diagnostics and exit status. File content, rule settings, paths, and engine changes invalidate cached results. Cache entries contain data, never executable shell code. If caching is unavailable, checks still run. Files requiring the Bash compatibility scanner are rescanned each time.
+
+Use `--cache` for individual invocations or `--no-cache` for a full rescan. This caches shellcheck-legibility; ShellCheck remains a separate correctness check.
+
+Benchmark uncached and cached repository checks with `make benchmark` (requires Hyperfine).
 
 ## Rules
 
@@ -615,13 +629,21 @@ check_no_stacked_comments "example.sh" "5" "# Second comment."
 
 ## Tests
 
+Build the native engine with Go 1.26 or later:
+
+```sh
+make build
+```
+
+The source CLI uses that build when present. Rebuild after engine changes. Set `SHELLCHECK_LEGIBILITY_ENGINE=bash` to compare against the Bash reference implementation.
+
 Install the repository's pre-commit hook once per clone:
 
 ```sh
 make install-hooks
 ```
 
-The setup script installs `.git/hooks/pre-commit`, preserves unmanaged hooks, and skips CI. The hook runs ShellCheck, shfmt, unit tests, system Bash compatibility, and configured legibility checks for staged files. `make check` runs the full-repository legibility scan and Docker end-to-end tests too.
+The setup script installs `.git/hooks/pre-commit`, preserves unmanaged hooks, and skips CI. The hook runs ShellCheck, shfmt, Go and Bash unit tests, system Bash compatibility, and configured legibility checks for staged files. `make check` runs the full-repository legibility scan and packaged-binary Docker tests too.
 
 ```sh
 make unit
@@ -633,16 +655,5 @@ make check
 ## Publishing
 
 ```sh
-git switch main
-git pull --ff-only
-make check
-git tag -a v0.2.5 -m "Release v0.2.5"
-git push origin v0.2.5
-```
-
-### Retry Homebrew
-
-```sh
-gh workflow run release.yml --ref main -f tag=v0.2.5
-gh run watch
+gh workflow run release.yml --ref main -f tag=v0.2.6
 ```

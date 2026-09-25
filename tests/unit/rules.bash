@@ -33,6 +33,7 @@ main() {
   test_config_formats
   test_false_positive_regressions
   test_shell_syntax_regressions
+  test_scanner_fast_path_regressions
   test_staged_hook_uses_index_content
   test_staged_hook_uses_index_config
   printf '%s\n' "ok"
@@ -1167,9 +1168,8 @@ test_shell_operators_still_reported() {
   SELECT=("LEG001" "LEG002")
   MAX_EXPRESSION_OPERATORS=0
   MAX_CONDITION_OPERATORS=0
-  scan_fixture 'value="$(first && second)"'
+  scan_fixture 'value="$(first && second)"' 'if ! ready; then' 'work' 'fi'
   assert_has_code "LEG001"
-  scan_fixture 'if ! ready; then' 'work' 'fi'
   assert_has_code "LEG002"
 }
 
@@ -1274,6 +1274,39 @@ test_function_structural_state_is_restored() {
   assert_equal "0" "$CONTROL_FLOW_DEPTH"
   assert_equal "0" "$IF_DEPTH"
   assert_has_code "LEG039"
+}
+
+test_scanner_fast_path_regressions() {
+  test_escaped_quotes_keep_literal_arguments
+  test_unclosed_escaped_quote_keeps_multiline_state
+  test_ascii_case_conversion
+}
+
+test_escaped_quotes_keep_literal_arguments() {
+  reset_test_state
+  SELECT=("LEG035")
+  local ansi="printf '%s\n' \$'can\\'t true' false"
+  scan_fixture 'run() {' 'printf "%s\n" "escaped \" true" false' "$ansi" '}'
+  assert_equal "2" "${#DIAG_CODES[@]}"
+  assert_equal "2" "${DIAG_LINES[0]}"
+  assert_equal "3" "${DIAG_LINES[1]}"
+}
+
+test_unclosed_escaped_quote_keeps_multiline_state() {
+  reset_test_state
+  SELECT=("LEG035")
+  scan_fixture 'run() {' 'printf "escaped \" true' 'still literal false"' 'create_user true' '}'
+  assert_equal "1" "${#DIAG_CODES[@]}"
+  assert_equal "4" "${DIAG_LINES[0]}"
+}
+
+test_ascii_case_conversion() {
+  local input output expected
+  for input in 'Hello WORLD' '!NOTE: Case' 'École' $'Hello\tWORLD'; do
+    expected="$(lowercase "$input")"
+    lowercase_into output "$input"
+    assert_equal "$expected" "$output"
+  done
 }
 
 main "$@"

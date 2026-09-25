@@ -1,0 +1,7 @@
+**
+!.build/
+!.build/e2e/
+!.build/e2e/shellcheck-legibility
+!tests/
+!tests/e2e/
+!tests/e2e/run-in-container.bash

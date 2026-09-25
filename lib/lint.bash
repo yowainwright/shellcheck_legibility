@@ -47,14 +47,16 @@ SHELL_CODE_SOURCE=""
 NORMALIZED_CODE_LINE=""
 EXPRESSION_OPERATOR_COUNT="0"
 SHELL_LINE_STARTED_QUOTED="0"
+SHELL_CASE_KEYWORD_PATTERN='(^|[^[:alnum:]_])case([^[:alnum:]_]|$)'
 
 lint_files() {
   local file
   prepare_rule_state
   prepare_comment_rule_state
+  prepare_cache
   [[ "${#FILES[@]}" -gt 0 ]] || return
   for file in "${FILES[@]}"; do
-    lint_file "$file"
+    lint_file_with_cache "$file"
   done
 }
 
@@ -63,6 +65,7 @@ lint_file() {
   ensure_rule_state
   ensure_comment_rule_state
   reset_scan_state "$path"
+  CURRENT_LINE_TEXT=""
   check_file_rules "$path"
   [[ "$RULE_STATEFUL_ENABLED$ANY_LINE_RULES_ENABLED$COMMENT_RULES_ENABLED" != "000" ]] || return
   scan_file_lines "$path"
@@ -315,8 +318,7 @@ close_heredoc() {
 }
 
 scan_shell_comment_line() {
-  local line="${1:-}"
-  local index char
+  local line="${1:-}" index char
   reset_shell_comment_line_state
   shell_line_scan_fast "$line" && return
   shell_line_scan_simple_quotes "$line" && return
@@ -324,6 +326,7 @@ scan_shell_comment_line() {
     char="${line:index:1}" SHELL_SCAN_WIDTH="1"
     [[ "$SHELL_SCAN_ESCAPED" == "1" ]] && shell_scan_consumes_escaped && SHELL_CODE+="x" && continue
     [[ "$SHELL_QUOTE_SCAN_SLOW" == "0" && "$SHELL_IN_SINGLE_QUOTE$SHELL_IN_DOUBLE_QUOTE" != "00" ]] && skip_simple_quoted_content "$line" "$index" && continue
+    [[ "$char" == [[:alnum:]_] ]] && consume_shell_word "$line" "$index" && continue
     case "$char" in
       \\ | "'" | '"' | '`') shell_syntax_consumed "$line" "$index" "$char" && continue ;;
       '$' | '(' | ')' | c) shell_syntax_consumed "$line" "$index" "$char" && continue ;;
@@ -333,6 +336,19 @@ scan_shell_comment_line() {
     [[ "$char" == "#" ]] && shell_comment_starts_at "$line" "$index" "$char" "$SHELL_IN_SINGLE_QUOTE" "$SHELL_IN_DOUBLE_QUOTE" && record_shell_comment "$index" && return
     append_shell_code "$char"
   done
+}
+
+consume_shell_word() {
+  local line="${1:-}" index="${2:-0}" word
+  [[ "$SHELL_IN_SINGLE_QUOTE$SHELL_IN_DOUBLE_QUOTE" == "00" ]] || return 1
+  [[ "${line:index}" =~ ^[[:alnum:]_]+ ]] || return 1
+  word="${BASH_REMATCH[0]}"
+  case "$word" in
+    case | in | 'esac') return 1 ;;
+  esac
+  SHELL_SCAN_WIDTH="${#word}"
+  append_shell_code "$word"
+  return 0
 }
 
 skip_simple_quoted_content() {
@@ -373,7 +389,7 @@ shell_line_scan_fast() {
     *\\* | *"'"* | *'"'*) return 1 ;;
     *'`'* | *'$('* | *'<<'*) return 1 ;;
   esac
-  [[ "$line" == *case* ]] && [[ "$line" =~ (^|[^[:alnum:]_])case([^[:alnum:]_]|$) ]] && return 1
+  [[ "$line" == *'case'* ]] && [[ "$line" =~ $SHELL_CASE_KEYWORD_PATTERN ]] && return 1
   prefix="${line%%#*}"
   if [[ "$prefix" != "$line" ]]; then
     comment_start_allowed "$line" "${#prefix}" || return 1
@@ -390,13 +406,15 @@ shell_line_scan_simple_quotes() {
   while simple_quote_remains "$rest"; do
     split_at_simple_quote "$rest"
     prefix="$SIMPLE_QUOTE_PREFIX"
+    [[ "$prefix" != *\\* ]] || return 1
     quote="$SIMPLE_QUOTE_CHAR"
     tail="$SIMPLE_QUOTE_TAIL"
-    simple_quote_content "$quote" "$tail" || return 1
+    simple_quote_content "$quote" "$tail" "$prefix" || return 1
     quoted="$SIMPLE_QUOTE_CONTENT"
     code+="${prefix}x"
     rest="${tail:$((${#quoted} + 1))}"
   done
+  [[ "$rest" != *\\* ]] || return 1
   SHELL_CODE="$code$rest"
 }
 
@@ -410,9 +428,9 @@ simple_quote_scan_supported() {
   [[ "${#SHELL_CASE_STATES[@]}" -eq 0 ]] || return 1
   [[ "${#SHELL_CONTEXT_TYPES[@]}" -eq 0 ]] || return 1
   case "$line" in
-    *\\* | *'`'* | *'$('* | *'<<'* | *'#'*) return 1 ;;
+    *'`'* | *'$('* | *'<<'* | *'#'*) return 1 ;;
   esac
-  [[ "$line" == *case* ]] && [[ "$line" =~ (^|[^[:alnum:]_])case([^[:alnum:]_]|$) ]] && return 1
+  [[ "$line" == *'case'* ]] && [[ "$line" =~ $SHELL_CASE_KEYWORD_PATTERN ]] && return 1
   return 0
 }
 
@@ -439,14 +457,32 @@ split_at_simple_quote() {
 }
 
 simple_quote_content() {
-  local quote="${1:-}" tail="${2:-}" content
-  if [[ "$quote" == '"' ]]; then
-    content="${tail%%\"*}"
-  else
-    content="${tail%%\'*}"
-  fi
+  local quote="${1:-}" tail="${2:-}" prefix="${3:-}" content
+  content="${tail%%"$quote"*}"
+  case "$quote:$prefix" in
+    '"':* | "'":*'$')
+      if [[ "$content" == *\\* ]]; then
+        quoted_content_with_escapes "$quote" "$tail" "$prefix"
+        return
+      fi
+      ;;
+  esac
   [[ "$content" != "$tail" ]] || return 1
   SIMPLE_QUOTE_CONTENT="$content"
+}
+
+quoted_content_with_escapes() {
+  local quote="${1:-}" tail="${2:-}" prefix="${3:-}" pattern
+  if [[ "$quote" == '"' ]]; then
+    pattern='^([^"\\]|\\.)*"'
+  elif [[ "$prefix" == *'$' ]]; then
+    pattern="^([^'\\\\]|\\\\.)*'"
+  else
+    return 1
+  fi
+  [[ "$tail" =~ $pattern ]] || return 1
+  SIMPLE_QUOTE_CONTENT="${BASH_REMATCH[0]}"
+  SIMPLE_QUOTE_CONTENT="${SIMPLE_QUOTE_CONTENT%?}"
 }
 
 shell_syntax_consumed() {
@@ -1008,6 +1044,7 @@ maybe_remember_pending_function() {
   local line_number="${1:-}"
   local line="${2:-}"
   local name
+  [[ "$line" != *'{'* ]] || return
   name="$(function_declaration_name "$line")"
   [[ -z "$name" ]] && return
   FUNCTION_NAMES+=("$name")
@@ -1043,41 +1080,11 @@ compact_function_declaration_name() {
 
 remember_function_name() {
   local line="${1:-}"
-  local name
-  name="$(function_name_from_open "$line")"
-  [[ -n "$name" ]] && FUNCTION_NAMES+=("$name")
-}
-
-function_name_from_open() {
-  local line="${1:-}"
-  function_keyword_name "$line" && return
-  compact_function_name "$line" && return
-  spaced_function_name "$line"
-}
-
-function_keyword_name() {
-  local line="${1:-}"
-  local keyword name
-  read -r keyword name _ <<< "$line"
-  [[ "$keyword" == "function" ]] || return 1
+  local name rest
+  read -r name rest <<< "$line"
+  [[ "$name" == "function" ]] && read -r name _ <<< "$rest"
   name="${name%%()*}"
-  printf '%s\n' "$name"
-}
-
-compact_function_name() {
-  local line="${1:-}"
-  local name="${line%%()*}"
-  [[ "$name" != "$line" ]] || return 1
-  shell_identifier "$name" || return 1
-  printf '%s\n' "$name"
-}
-
-spaced_function_name() {
-  local line="${1:-}"
-  local name
-  read -r name _ <<< "$line"
-  shell_identifier "$name" || return 1
-  printf '%s\n' "$name"
+  shell_identifier "$name" && FUNCTION_NAMES+=("$name")
 }
 
 shell_identifier() {
@@ -1126,38 +1133,45 @@ handle_if_line() {
 }
 
 complete_inline_if() {
-  local path="${1:-}" line_number="${2:-}" line="${3:-}" analysis flags branch
+  local path="${1:-}" line_number="${2:-}" line="${3:-}"
   local has_else="0" has_elif="0" then_branch_exits="0"
-  analysis="$(inline_if_analysis "$line")" || return 1
-  flags="${analysis%%$'\n'*}"
-  branch="${analysis#*$'\n'}"
-  [[ "${flags:0:1}" == "1" ]] && IF_HAS_ALTERNATE[IF_DEPTH]="1"
-  [[ "${flags:2:1}" == "1" ]] && has_else="1"
-  [[ "${flags:3:1}" == "1" ]] && has_elif="1"
-  command_code_exits "$branch" && then_branch_exits="1"
+  analyze_inline_if "$line" || return 1
+  [[ "$INLINE_ANALYSIS_ALTERNATE" == "1" ]] && IF_HAS_ALTERNATE[IF_DEPTH]="1"
+  [[ "$INLINE_ANALYSIS_HAS_ELSE" == "1" ]] && has_else="1"
+  [[ "$INLINE_ANALYSIS_HAS_ELIF" == "1" ]] && has_elif="1"
+  command_code_exits "$INLINE_ANALYSIS_BRANCH" && then_branch_exits="1"
   if [[ "$then_branch_exits" == "1" ]]; then
     IF_THEN_EXIT[IF_DEPTH]="1"
     [[ "$has_else$has_elif" == "10" ]] && report_prefer_early_return "$path" "$line_number"
   fi
   close_if_block
-  [[ "${flags:1:1}" == "1" ]] && reset_guard_candidate "$line"
+  [[ "$INLINE_ANALYSIS_TAIL" == "1" ]] && reset_guard_candidate "$line"
   return 0
 }
 
 inline_if_analysis() {
+  analyze_inline_if "${1:-}" || return 1
+  printf '%s\n%s\n' "$INLINE_ANALYSIS_ALTERNATE$INLINE_ANALYSIS_TAIL$INLINE_ANALYSIS_HAS_ELSE$INLINE_ANALYSIS_HAS_ELIF" "$INLINE_ANALYSIS_BRANCH"
+}
+
+analyze_inline_if() {
   local word
+  [[ "${1:-}" == *fi* ]] || return 1
   prepare_inline_if_words "${1:-}"
   reset_inline_if_analysis
   for word in "${INLINE_ANALYSIS_WORDS[@]}"; do
     consume_inline_if_word "$word"
   done
-  inline_if_analysis_complete || return 1
-  printf '%s\n%s\n' "$INLINE_ANALYSIS_ALTERNATE$INLINE_ANALYSIS_TAIL$INLINE_ANALYSIS_HAS_ELSE$INLINE_ANALYSIS_HAS_ELIF" "$INLINE_ANALYSIS_BRANCH"
+  inline_if_analysis_complete
 }
 
 prepare_inline_if_words() {
-  local line
-  line="$(shell_code "${1:-}")"
+  local line="${1:-}"
+  if [[ "$line" == "$SHELL_CODE_SOURCE" ]]; then
+    line="$SHELL_CODE"
+  else
+    line="$(shell_code "$line")"
+  fi
   line="${line//;/ ; }"
   read -r -a INLINE_ANALYSIS_WORDS <<< "$line"
 }
@@ -1299,7 +1313,8 @@ open_if_block() {
   IF_START_LINE[IF_DEPTH]="$line_number"
   IF_START_TEXT[IF_DEPTH]="$CURRENT_LINE_TEXT"
   IF_HAS_ALTERNATE[IF_DEPTH]="0"
-  IF_COMPARE_NAME[IF_DEPTH]="$(comparison_left_name "$line")"
+  comparison_left_name_into "$line"
+  IF_COMPARE_NAME[IF_DEPTH]="$COMPARISON_LEFT_NAME"
   IF_COMPARE_COUNT[IF_DEPTH]="1"
   IF_COMPARE_REPORTED[IF_DEPTH]="0"
 }
@@ -1641,9 +1656,15 @@ check_hoist_if_operators() {
   local path="${1:-$SCAN_PATH}"
   local line_number="${2:-$SCAN_LINE_NUMBER}"
   local line="${3:-$CURRENT_LINE_TEXT}"
-  local condition count
-  condition="$(condition_text "$(shell_code "$line")")"
-  count="$(count_condition_operators "$condition")"
+  local count
+  if [[ "$line" == "$SHELL_CODE_SOURCE" ]]; then
+    line="$SHELL_CODE"
+  else
+    line="$(shell_code "$line")"
+  fi
+  condition_text_into "$line"
+  count_condition_operators_into "$CONDITION_TEXT"
+  count="$CONDITION_OPERATOR_COUNT"
   ((count <= MAX_CONDITION_OPERATORS)) && return
   report_hoist_if_operators "$path" "$line_number" "$count"
 }
@@ -1928,7 +1949,7 @@ check_automated_comment_body() {
   prepare_automated_comment_identifiers
   ((${#NORMALIZED_AUTOMATED_COMMENT_IDENTIFIERS[@]} > 0)) || return
   normalized_body="$(normalize_attribution_text "$body")"
-  lower_body="$(lowercase "$body")"
+  lowercase_into lower_body "$body"
   normalized_author=""
   [[ "$lower_body" == *"@author"* ]] && normalized_author="$(normalized_comment_author "$body")"
   automated_comment_identifier "$body" "$normalized_body" "$normalized_author" || return
@@ -2043,7 +2064,7 @@ comment_author_matches() {
 normalized_comment_author() {
   local body="${1:-}"
   local pattern='(^|[[:space:]])@author([[:space:]]|:)+(.+)$'
-  body="$(lowercase "$body")"
+  lowercase_into body "$body"
   [[ "$body" =~ $pattern ]] || return 0
   normalize_attribution_text "${BASH_REMATCH[3]}"
 }
@@ -2074,8 +2095,8 @@ passive_generation_signature() {
   local body="${1:-}"
   local identifier="${2:-}"
   local verb="${3:-}"
-  body="$(lowercase "$body")"
-  identifier="$(lowercase "$identifier")"
+  lowercase_into body "$body"
+  lowercase_into identifier "$identifier"
   passive_attribution_phrase_present "$body" "$verb by $identifier" && return 0
   passive_attribution_phrase_present "$body" "$verb by a $identifier" && return 0
   passive_attribution_phrase_present "$body" "$verb by an $identifier"
@@ -2098,7 +2119,7 @@ attribution_phrase_boundaries() {
   local prefix="${1:-}"
   local raw_suffix="${2:-}"
   local suffix first last terminators
-  suffix="$(trim "$raw_suffix")"
+  trim_into suffix "$raw_suffix"
   last="${prefix:$((${#prefix} - 1)):1}"
   [[ -z "$prefix" || ! "$last" =~ [[:alnum:]_] ]] || return 1
   attribution_conjunction_follows "$raw_suffix" && return 0
@@ -2124,7 +2145,7 @@ normalize_attribution_text() {
   local value="${1:-}"
   local -a words
   local IFS=" "
-  value="$(lowercase "$value")"
+  lowercase_into value "$value"
   value="${value//[![:alnum:]]/ }"
   read -r -a words <<< "$value"
   printf '%s\n' "${words[*]}"
@@ -2202,7 +2223,7 @@ top_level_declaration_line() {
   local line="${1:-}"
   local word
   simple_assignment_line "$line" && return 0
-  word="$(first_word "$line")"
+  read -r word _ <<< "$line"
   case "$word" in
     set) return 0 ;;
     shopt) return 0 ;;
@@ -2239,7 +2260,7 @@ top_level_block_close() {
 top_level_function_dispatch() {
   local line="${1:-}"
   local command
-  command="$(first_word "$line")"
+  read -r command _ <<< "$line"
   function_name_seen "$command"
 }
 
@@ -2438,21 +2459,21 @@ comment_starts_after_operator() {
 shell_comment_ignored() {
   local index="${1:-0}"
   local body
-  body="$(trim "${2:-}")"
+  trim_into body "${2:-}"
   ((index == 0)) && [[ "$body" == "!"* ]] && return 0
   shell_comment_directive "$body"
 }
 
 shell_comment_directive() {
   local body="${1:-}"
-  body="$(lowercase "$body")"
+  lowercase_into body "$body"
   [[ "$body" == shellcheck* ]] && return 0
   [[ "$body" == noqa* ]]
 }
 
 comment_allowed() {
   local body
-  body="$(trim "${1:-}")"
+  trim_into body "${1:-}"
   comment_matches_any_regex "$body" && return 0
   comment_has_prefix_identifier "$body" && return 0
   comment_has_suffix_identifier "$body"
@@ -2472,10 +2493,10 @@ comment_matches_regex() {
   local body="${1:-}"
   local matcher
   local normalized_body normalized_matcher
-  matcher="$(trim "${2:-}")"
+  trim_into matcher "${2:-}"
   [[ -n "$matcher" ]] || return 1
-  normalized_body="$(lowercase "$body")"
-  normalized_matcher="$(lowercase "$matcher")"
+  lowercase_into normalized_body "$body"
+  lowercase_into normalized_matcher "$matcher"
   [[ "$normalized_body" =~ $normalized_matcher ]]
 }
 
@@ -2491,11 +2512,11 @@ comment_has_prefix_identifier() {
 
 comment_prefix_matches() {
   local body identifier remainder
-  body="$(trim "${1:-}")"
-  identifier="$(trim "${2:-}")"
+  trim_into body "${1:-}"
+  trim_into identifier "${2:-}"
   [[ -n "$identifier" ]] || return 1
-  body="$(lowercase "$body")"
-  identifier="$(lowercase "$identifier")"
+  lowercase_into body "$body"
+  lowercase_into identifier "$identifier"
   [[ "$body" == "$identifier"* ]] || return 1
   identifier_ends_word "$identifier" || return 0
   remainder="${body:${#identifier}:1}"
@@ -2514,11 +2535,11 @@ comment_has_suffix_identifier() {
 
 comment_suffix_matches() {
   local body identifier offset previous
-  body="$(trim "${1:-}")"
-  identifier="$(trim "${2:-}")"
+  trim_into body "${1:-}"
+  trim_into identifier "${2:-}"
   [[ -n "$identifier" ]] || return 1
-  body="$(lowercase "$body")"
-  identifier="$(lowercase "$identifier")"
+  lowercase_into body "$body"
+  lowercase_into identifier "$identifier"
   [[ "$body" == *"$identifier" ]] || return 1
   offset=$((${#body} - ${#identifier}))
   ((offset == 0)) && return 0
@@ -2557,14 +2578,18 @@ condition_text_into() {
 }
 
 count_condition_operators() {
-  local text="${1:-}"
-  local count="0"
-  count=$((count + $(count_occurrences "$text" "&&")))
-  count=$((count + $(count_occurrences "$text" "||")))
-  count=$((count + $(count_occurrences " $text " " -a ")))
-  count=$((count + $(count_occurrences " $text " " -o ")))
-  count=$((count + $(count_occurrences " $text " " ! ")))
-  printf '%s\n' "$count"
+  count_condition_operators_into "${1:-}"
+  printf '%s\n' "$CONDITION_OPERATOR_COUNT"
+}
+
+count_condition_operators_into() {
+  local text=" ${1:-} "
+  local operator occurrences
+  CONDITION_OPERATOR_COUNT="0"
+  for operator in '&&' '||' ' -a ' ' -o ' ' ! '; do
+    count_occurrences_into occurrences "$text" "$operator"
+    CONDITION_OPERATOR_COUNT=$((CONDITION_OPERATOR_COUNT + occurrences))
+  done
 }
 
 count_expression_operators() {
@@ -2665,7 +2690,8 @@ update_if_chain_count() {
   local line_number="${2:-}"
   local line="${3:-}"
   local next_name current_name
-  next_name="$(comparison_left_name "$line")"
+  comparison_left_name_into "$line"
+  next_name="$COMPARISON_LEFT_NAME"
   current_name="${IF_COMPARE_NAME[$IF_DEPTH]}"
   [[ -z "$next_name" ]] && return
   [[ "$next_name" != "$current_name" ]] && return
@@ -2899,6 +2925,7 @@ append_diag() {
   DIAG_LINES+=("$line")
   DIAG_COLUMNS+=("$column")
   DIAG_CODES+=("$code")
-  DIAG_RULES+=("$(rule_name "$code")")
+  set_rule_name "$code"
+  DIAG_RULES+=("$RULE_NAME")
   DIAG_MESSAGES+=("$message")
 }

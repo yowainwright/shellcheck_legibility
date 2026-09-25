@@ -1,33 +1,39 @@
 rule_name() {
+  set_rule_name "${1:-}"
+  printf '%s\n' "$RULE_NAME"
+}
+
+set_rule_name() {
+  RULE_NAME=""
   case "${1:-}" in
-    LEG001) printf '%s\n' "max-expression-operators" ;;
-    LEG002) printf '%s\n' "hoist-if-operators" ;;
-    LEG003) printf '%s\n' "max-control-flow-depth" ;;
-    LEG005) printf '%s\n' "no-quadratic-patterns" ;;
-    LEG006) printf '%s\n' "no-redundant-boolean-logic" ;;
-    LEG007) printf '%s\n' "prefer-positive-condition-names" ;;
-    LEG008) printf '%s\n' "no-trivial-wrapper-functions" ;;
-    LEG009) printf '%s\n' "prefer-early-return" ;;
-    LEG010) printf '%s\n' "prefer-guard-clauses" ;;
-    *) shell_rule_name "${1:-}" ;;
+    LEG001) RULE_NAME="max-expression-operators" ;;
+    LEG002) RULE_NAME="hoist-if-operators" ;;
+    LEG003) RULE_NAME="max-control-flow-depth" ;;
+    LEG005) RULE_NAME="no-quadratic-patterns" ;;
+    LEG006) RULE_NAME="no-redundant-boolean-logic" ;;
+    LEG007) RULE_NAME="prefer-positive-condition-names" ;;
+    LEG008) RULE_NAME="no-trivial-wrapper-functions" ;;
+    LEG009) RULE_NAME="prefer-early-return" ;;
+    LEG010) RULE_NAME="prefer-guard-clauses" ;;
+    *) set_shell_rule_name "${1:-}" ;;
   esac
 }
 
-shell_rule_name() {
+set_shell_rule_name() {
   case "${1:-}" in
-    LEG016) printf '%s\n' "require-executable-shebang" ;;
-    LEG017) printf '%s\n' "no-direct-shell-bin-smoke" ;;
-    LEG024) printf '%s\n' "prefer-object-lookup" ;;
-    LEG025) printf '%s\n' "require-filename-matches-dirname" ;;
-    LEG026) printf '%s\n' "no-mixed-filename-casing" ;;
-    LEG034) printf '%s\n' "prefer-case-over-long-if-chain" ;;
-    LEG035) printf '%s\n' "no-bool-literal-args" ;;
-    LEG038) printf '%s\n' "max-function-lines" ;;
-    LEG039) printf '%s\n' "prefer-functions" ;;
-    LEG040) printf '%s\n' "use-defaults-in-functions" ;;
-    LEG041) printf '%s\n' "no-unmatched-comments" ;;
-    LEG042) printf '%s\n' "no-automated-comment-attribution" ;;
-    LEG043) printf '%s\n' "no-stacked-comments" ;;
+    LEG016) RULE_NAME="require-executable-shebang" ;;
+    LEG017) RULE_NAME="no-direct-shell-bin-smoke" ;;
+    LEG024) RULE_NAME="prefer-object-lookup" ;;
+    LEG025) RULE_NAME="require-filename-matches-dirname" ;;
+    LEG026) RULE_NAME="no-mixed-filename-casing" ;;
+    LEG034) RULE_NAME="prefer-case-over-long-if-chain" ;;
+    LEG035) RULE_NAME="no-bool-literal-args" ;;
+    LEG038) RULE_NAME="max-function-lines" ;;
+    LEG039) RULE_NAME="prefer-functions" ;;
+    LEG040) RULE_NAME="use-defaults-in-functions" ;;
+    LEG041) RULE_NAME="no-unmatched-comments" ;;
+    LEG042) RULE_NAME="no-automated-comment-attribution" ;;
+    LEG043) RULE_NAME="no-stacked-comments" ;;
   esac
 }
 
@@ -69,9 +75,9 @@ selector_explicitly_matches_any() {
 selector_explicitly_matches() {
   local code="${1:-}"
   local selector="${2:-}"
-  local name
-  name="$(rule_name "$code")"
-  [[ "$selector" == "$code" || "$selector" == "$name" ]]
+  [[ "$selector" == "$code" ]] && return 0
+  set_rule_name "$code"
+  [[ "$selector" == "$RULE_NAME" ]]
 }
 
 selector_matches_any() {
@@ -88,11 +94,11 @@ selector_matches_any() {
 selector_matches() {
   local code="${1:-}"
   local selector="${2:-}"
-  local name
-  name="$(rule_name "$code")"
   [[ "$selector" == "all" ]] && return 0
   [[ "$selector" == "LEG" ]] && return 0
-  [[ "$selector" == "$code" || "$selector" == "$name" ]]
+  [[ "$selector" == "$code" ]] && return 0
+  set_rule_name "$code"
+  [[ "$selector" == "$RULE_NAME" ]]
 }
 
 line_ignores_code() {
