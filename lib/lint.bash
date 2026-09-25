@@ -221,6 +221,7 @@ scan_line() {
   local raw_line="${3:-}"
   local line
   CURRENT_LINE_TEXT="$raw_line"
+  [[ "$raw_line" == *[![:space:]]* || "${#HEREDOC_DELIMITERS[@]}" -gt 0 ]] || return
   comment_policy_consumes_line "$path" "$line_number" "$raw_line" && return
   normalized_code_line "$raw_line"
   line="$NORMALIZED_CODE_LINE"
@@ -263,10 +264,16 @@ comment_policy_consumes_line() {
   local line_number="${2:-}"
   local line="${3:-}"
   ensure_comment_rule_state
-  heredoc_payload_line "$line" && return 0
+  if ((${#HEREDOC_DELIMITERS[@]} > 0)); then
+    heredoc_payload_line "$line" && return 0
+  fi
   scan_shell_comment_line "$line"
-  [[ "$COMMENT_RULES_ENABLED" == "1" ]] && run_scanned_comment_checks "$path" "$line_number" "$line"
-  activate_pending_heredocs
+  if [[ "$COMMENT_RULES_ENABLED$SHELL_COMMENT_FOUND" == "11" ]]; then
+    run_scanned_comment_checks "$path" "$line_number" "$line"
+  fi
+  case "$SHELL_SCAN_ESCAPED:${#PENDING_HEREDOC_DELIMITERS[@]}" in
+    0:[1-9]*) activate_pending_heredocs ;;
+  esac
   return 1
 }
 
@@ -861,14 +868,24 @@ run_stateless_line_checks() {
 }
 
 update_state_from_line() {
-  local path="${1:-}"
-  local line_number="${2:-}"
-  local line="${3:-}"
-  update_function_state "$path" "$line_number" "$line"
-  update_if_state "$path" "$line_number" "$line"
-  update_loop_state "$path" "$line_number" "$line"
-  update_case_state "$path" "$line_number" "$line"
-  update_exit_state "$line"
+  local path="${1:-$SCAN_PATH}" line_number="${2:-$SCAN_LINE_NUMBER}" line="${3:-}"
+  if [[ "$IN_FUNCTION" == "1" ]]; then
+    [[ "$line" == "}" ]] && update_function_state "$path" "$line_number" "$line"
+  elif [[ "$PENDING_FUNCTION_DECLARATION" == "1" ]]; then
+    update_function_state "$path" "$line_number" "$line"
+  else
+    case "$line" in
+      function[[:space:]]* | *'()'* | *'{'*) update_function_state "$path" "$line_number" "$line" ;;
+    esac
+  fi
+  case "$line" in
+    else* | elif* | if[[:space:]]*) update_if_state "$path" "$line_number" "$line" ;;
+    for[[:space:]]* | while[[:space:]]* | until[[:space:]]*) update_loop_state "$path" "$line_number" "$line" ;;
+    case[[:space:]]*) update_case_state "$path" "$line_number" "$line" ;;
+  esac
+  if [[ "$IF_DEPTH" != "0" ]]; then
+    update_exit_state "$line"
+  fi
 }
 
 close_completed_blocks() {
@@ -1066,9 +1083,11 @@ update_if_state() {
   local path="${1:-$SCAN_PATH}"
   local line_number="${2:-$SCAN_LINE_NUMBER}"
   local line="${3:-}"
-  handle_else_line "$path" "$line_number" "$line" && return
-  handle_elif_line "$path" "$line_number" "$line" && return
-  handle_if_line "$path" "$line_number" "$line"
+  case "$line" in
+    else*) handle_else_line "$path" "$line_number" "$line" ;;
+    elif*) handle_elif_line "$path" "$line_number" "$line" ;;
+    if[[:space:]]*) handle_if_line "$path" "$line_number" "$line" ;;
+  esac
 }
 
 handle_else_line() {
