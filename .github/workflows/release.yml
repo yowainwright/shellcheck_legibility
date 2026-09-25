@@ -6,18 +6,39 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
+      - name: Require tap token
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::error::Configure HOMEBREW_TAP_GITHUB_TOKEN before releasing."
+            exit 1
+          fi
+
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
-      - name: Install ShellCheck
-        run: sudo apt-get update && sudo apt-get install --yes shellcheck
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          go install mvdan.cc/sh/v3/cmd/shfmt@v3.14.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Validate source
         run: |
@@ -40,4 +61,51 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz --verify-tag --generate-notes
+
+  homebrew:
+    name: Open Homebrew formula PR
+    needs: release
+    runs-on: macos-latest
+    steps:
+      - name: Check out Homebrew tap
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: yowainwright/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          ref: main
+          persist-credentials: false
+          path: homebrew-tap
+
+      - name: Set up tap Ruby
+        run: |
+          brew list ruby >/dev/null 2>&1 || brew install ruby
+          echo "$(brew --prefix ruby)/bin" >> "$GITHUB_PATH"
+
+      - name: Update Homebrew formula
+        working-directory: homebrew-tap
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          scripts/update-formula shellcheck-legibility "${TAG_NAME#v}"
+          scripts/validate-tap --strict
+
+      - name: Open Homebrew formula pull request
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1
+        with:
+          token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          path: homebrew-tap
+          add-paths: |
+            Formula/shellcheck-legibility.rb
+            brews/shellcheck-legibility.json
+          base: main
+          branch: shellcheck-legibility-${{ github.ref_name }}
+          commit-message: "shellcheck-legibility ${{ github.ref_name }}"
+          title: "shellcheck-legibility ${{ github.ref_name }}"
+          body: |
+            Update the Homebrew formula to the published shellcheck-legibility release.
+
+            Release: https://github.com/yowainwright/shellcheck_legibility/releases/tag/${{ github.ref_name }}
+
+            Generated from the published archives by the tap's shared scripts/update-formula.
+            Merge after the tap's required validation passes.
