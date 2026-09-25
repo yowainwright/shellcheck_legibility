@@ -482,6 +482,8 @@ Reject comments that do not match a configured regular-expression matcher, prefi
 
 Shebangs, ShellCheck directives, and `noqa` directives are ignored. No matcher or identifier is configured by default, so selecting this rule directly rejects ordinary comments.
 
+This repository selects all three comment rules in `.shellcheck-legibility.yml` and allows only the `!NOTE` prefix. `AGENTS.md` reserves that marker for code comments explicitly requested by a human.
+
 #### options
 
 - `comment-matchers`: case-insensitive Bash regular expressions matched anywhere in the comment body. Default: `[]`.
@@ -613,8 +615,17 @@ check_no_stacked_comments "example.sh" "5" "# Second comment."
 
 ## Tests
 
+Install the repository's pre-commit hook once per clone:
+
+```sh
+make install-hooks
+```
+
+The setup script installs `.git/hooks/pre-commit`, preserves unmanaged hooks, and skips CI. The hook runs ShellCheck, shfmt, unit tests, system Bash compatibility, and configured legibility checks for staged files. `make check` runs the full-repository legibility scan and Docker end-to-end tests too.
+
 ```sh
 make unit
 make e2e
+make pre-commit
 make check
 ```

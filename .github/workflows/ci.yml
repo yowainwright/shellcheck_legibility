@@ -23,6 +23,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
+          go install mvdan.cc/sh/v3/cmd/shfmt@v3.14.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Check
         run: make check

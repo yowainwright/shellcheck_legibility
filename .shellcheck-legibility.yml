@@ -1,0 +1,2 @@
+select: [LEG, LEG041, LEG042, LEG043]
+comment-prefix-identifiers: ['!NOTE']

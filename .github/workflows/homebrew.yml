@@ -21,4 +21,4 @@ jobs:
           persist-credentials: false
 
       - name: Test system Bash compatibility
-        run: PATH=/usr/bin:/bin /bin/bash tests/unit/rules.bash
+        run: make compatibility

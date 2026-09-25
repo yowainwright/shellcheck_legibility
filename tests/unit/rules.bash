@@ -4,6 +4,7 @@
 set -u
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+STAGED_HOOK_TEST_DIR=""
 
 # shellcheck disable=SC1091
 # shellcheck source=../../lib/defaults.bash
@@ -32,7 +33,89 @@ main() {
   test_config_formats
   test_false_positive_regressions
   test_shell_syntax_regressions
+  test_staged_hook_uses_index_content
+  test_staged_hook_uses_index_config
   printf '%s\n' "ok"
+}
+
+test_staged_hook_uses_index_content() {
+  local file output
+  STAGED_HOOK_TEST_DIR="$(mktemp -d "$ROOT_DIR/.staged-hook-test.XXXXXX")"
+  trap cleanup_staged_hook_test EXIT
+  setup_staged_hook_fixture "$STAGED_HOOK_TEST_DIR"
+  file=$'nested/odd\npath[1].sh'
+  prepare_staged_hook_file "$STAGED_HOOK_TEST_DIR" "$file"
+  output="$(env -i PATH="$PATH" "$STAGED_HOOK_TEST_DIR/scripts/setup/check-staged.sh")"
+  assert_equal "staged contents" "$output"
+  cleanup_staged_hook_test
+  trap - EXIT
+}
+
+test_staged_hook_uses_index_config() {
+  local output
+  STAGED_HOOK_TEST_DIR="$(mktemp -d "$ROOT_DIR/.staged-hook-test.XXXXXX")"
+  trap cleanup_staged_hook_test EXIT
+  setup_staged_hook_fixture "$STAGED_HOOK_TEST_DIR"
+  prepare_staged_hook_config "$STAGED_HOOK_TEST_DIR"
+  if output="$(env -i PATH="$PATH" TEST_LINTER_BIN="$ROOT_DIR/bin/shellcheck-legibility" "$STAGED_HOOK_TEST_DIR/scripts/setup/check-staged.sh" 2>&1)"; then
+    fail "expected staged config to report LEG041"
+  fi
+  [[ "$output" == *"LEG041"* ]] || fail "expected staged config to enable LEG041: $output"
+  cleanup_staged_hook_test
+  trap - EXIT
+}
+
+setup_staged_hook_fixture() {
+  local dir="${1:-}"
+  mkdir -p "$dir/scripts/setup" "$dir/bin"
+  cp "$ROOT_DIR/scripts/setup/check-staged.sh" "$dir/scripts/setup/check-staged.sh"
+  write_staged_hook_linter "$dir/bin/shellcheck-legibility"
+  chmod +x "$dir/bin/shellcheck-legibility"
+  isolated_test_git -C "$dir" init -q
+  isolated_test_git -C "$dir" config user.name "Unit Test"
+  isolated_test_git -C "$dir" config user.email "unit-test@example.invalid"
+}
+
+isolated_test_git() {
+  env -i PATH="$PATH" git "$@"
+}
+
+write_staged_hook_linter() {
+  local path="${1:-}"
+  cat > "$path" << 'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -n "${TEST_LINTER_BIN:-}" ]]; then
+  exec "$TEST_LINTER_BIN" "$@"
+fi
+[[ "${1:-}" == "check" ]]
+shift
+for file in "$@"; do
+  cat "$file"
+done
+STUB
+}
+
+prepare_staged_hook_file() {
+  local dir="${1:-}" file="${2:-}"
+  mkdir -p "$(dirname "$dir/$file")"
+  printf '%s\n' "staged contents" > "$dir/$file"
+  isolated_test_git -C "$dir" add -- "$file"
+  printf '%s\n' "unstaged contents" > "$dir/$file"
+}
+
+prepare_staged_hook_config() {
+  local dir="${1:-}"
+  printf '%s\n' 'select: [LEG041]' > "$dir/.shellcheck-legibility.yml"
+  isolated_test_git -C "$dir" add -- .shellcheck-legibility.yml
+  printf '%s\n' 'select: [LEG001]' > "$dir/.shellcheck-legibility.yml"
+  printf '%s\n' '#!/usr/bin/env bash' '# ordinary comment' 'printf ok' > "$dir/config-check.sh"
+  isolated_test_git -C "$dir" add -- config-check.sh
+}
+
+cleanup_staged_hook_test() {
+  [[ -z "$STAGED_HOOK_TEST_DIR" ]] || rm -rf -- "$STAGED_HOOK_TEST_DIR"
+  STAGED_HOOK_TEST_DIR=""
 }
 
 test_config_formats() {
@@ -98,6 +181,25 @@ test_core_rules() {
   test_max_function_lines
   test_prefer_functions
   test_prefer_functions_allows_dispatch
+  test_selected_line_rule_skips_other_analysis
+  test_file_rule_skips_source_scan
+}
+
+test_selected_line_rule_skips_other_analysis() {
+  reset_test_state
+  SELECT=("LEG001")
+  MAX_EXPRESSION_OPERATORS=0
+  scan_fixture 'run() {' 'first && second' '}'
+  assert_has_code "LEG001"
+  assert_equal "0" "$CONTROL_FLOW_DEPTH"
+  assert_equal "0" "$IN_FUNCTION"
+}
+
+test_file_rule_skips_source_scan() {
+  reset_test_state
+  SELECT=("LEG025")
+  lint_file "$ROOT_DIR/tests/unit/rules.bash"
+  assert_equal "0" "$SCAN_LINE_NUMBER"
 }
 
 test_function_rules() {
@@ -114,6 +216,7 @@ test_function_rules() {
   test_use_defaults_in_functions_reports_command_list_assignment
   test_split_function_declaration_reports_arg_binding
   test_inline_function_does_not_leak_function_state
+  test_function_state_closes_with_trailing_semicolon
 }
 
 test_comment_rules() {
@@ -172,6 +275,7 @@ test_comment_syntax_scanner() {
   test_scan_line_closes_escaped_heredoc
   test_scan_line_closes_quoted_heredoc_with_spaces
   test_scan_line_defers_heredoc_across_continuation
+  test_scan_line_activates_heredoc_after_blank_continuation
   test_scan_line_detects_quoted_command_substitution_heredoc
   test_scan_line_detects_comment_in_case_arm_substitution
   test_scan_line_skips_ansi_c_quoted_hash
@@ -345,6 +449,14 @@ test_inline_function_does_not_leak_function_state() {
   reset_test_state
   update_function_state "example.sh" "3" 'deploy() { local target="${1:-staging}"; }'
   [[ "$IN_FUNCTION" == "0" ]] || fail "expected inline function to stay closed"
+}
+
+test_function_state_closes_with_trailing_semicolon() {
+  reset_test_state
+  SELECT=("LEG039")
+  scan_fixture 'broken() {' ':' '};' 'docker build .'
+  assert_equal "0" "$IN_FUNCTION"
+  assert_has_code "LEG039"
 }
 
 test_no_unmatched_comments() {
@@ -638,10 +750,11 @@ test_scan_line_skips_heredoc_payload() {
   signature="# Generated by $identifier."
   SELECT=("LEG041" "LEG042")
   scan_line "example.sh" "1" "cat <<'SCRIPT'"
-  scan_line "example.sh" "2" "$signature"
-  scan_line "example.sh" "3" "SCRIPT"
+  scan_line "example.sh" "2" ""
+  scan_line "example.sh" "3" "$signature"
+  scan_line "example.sh" "4" "SCRIPT"
   assert_no_diagnostics
-  scan_line "example.sh" "4" "$signature"
+  scan_line "example.sh" "5" "$signature"
   assert_has_code "LEG041"
   assert_has_code "LEG042"
 }
@@ -700,6 +813,22 @@ test_scan_line_defers_heredoc_across_continuation() {
   assert_equal "1" "${#DIAG_CODES[@]}"
   scan_line "example.sh" "5" "$signature"
   assert_equal "2" "${#DIAG_CODES[@]}"
+}
+
+test_scan_line_activates_heredoc_after_blank_continuation() {
+  reset_test_state
+  local identifier signature
+  identifier="code""x"
+  signature="# Generated by $identifier."
+  SELECT=("LEG042")
+  scan_line "example.sh" "1" 'cat <<EOF \'
+  scan_line "example.sh" "2" ""
+  assert_equal "1" "${#HEREDOC_DELIMITERS[@]}"
+  scan_line "example.sh" "3" "$signature"
+  assert_no_diagnostics
+  scan_line "example.sh" "4" "EOF"
+  scan_line "example.sh" "5" "$signature"
+  assert_has_code "LEG042"
 }
 
 test_scan_line_detects_quoted_command_substitution_heredoc() {
@@ -805,6 +934,9 @@ test_false_positive_regressions() {
   test_component_filename_still_reported
   test_literal_operators_allowed
   test_heredoc_is_not_shell_syntax
+  test_group_redirection_does_not_close_function
+  test_case_parser_function_closes_before_next_function
+  test_function_structural_state_is_restored
   test_real_function_lines_still_reported
 }
 
@@ -910,8 +1042,15 @@ test_shell_syntax_regressions() {
   test_inline_wrapped_function_reported
   test_inline_exit_guard_allowed
   test_inline_conditional_tail_allowed
+  test_early_return_regressions
   test_exit_parser_empty_commands
   test_exit_parser_preserves_exit_commands
+}
+
+test_early_return_regressions() {
+  test_inline_elif_else_does_not_report_early_return
+  test_multiline_elif_else_does_not_report_early_return
+  test_simple_else_after_exit_reports_early_return
 }
 
 test_exit_parser_empty_commands() {
@@ -963,6 +1102,27 @@ test_inline_conditional_tail_allowed() {
   SELECT=("LEG010")
   scan_fixture 'run() {' 'if ready; then work; fi; finish' '}'
   assert_no_diagnostics
+}
+
+test_inline_elif_else_does_not_report_early_return() {
+  reset_test_state
+  SELECT=("LEG009")
+  scan_fixture 'run() {' 'if x; then return; elif y; then work; else other; fi' '}'
+  assert_no_diagnostics
+}
+
+test_multiline_elif_else_does_not_report_early_return() {
+  reset_test_state
+  SELECT=("LEG009")
+  scan_fixture 'run() {' 'if x; then' 'return' 'elif y; then' 'work' 'else' 'other' 'fi' '}'
+  assert_no_diagnostics
+}
+
+test_simple_else_after_exit_reports_early_return() {
+  reset_test_state
+  SELECT=("LEG009")
+  scan_fixture 'run() {' 'if x; then return; else other; fi' '}'
+  assert_has_code "LEG009"
 }
 
 test_optional_final_branch_allowed() {
@@ -1065,6 +1225,47 @@ test_heredoc_function_lines_preserved() {
   scan_fixture 'write() {' "cat <<'EOF'" 'data' '}' 'more data' 'EOF' '}'
   assert_has_code "LEG038"
   assert_equal "Function has 7 lines (max 4). Extract focused helper functions." "${DIAG_MESSAGES[0]}"
+}
+
+test_group_redirection_does_not_close_function() {
+  reset_test_state
+  SELECT=("LEG039")
+  scan_fixture 'write_bundle() {' '{' 'printf output' '} > "$bundle_path"' 'chmod +x "$bundle_path"' '}'
+  assert_no_diagnostics
+}
+
+test_case_parser_function_closes_before_next_function() {
+  reset_test_state
+  SELECT=("LEG039")
+  scan_case_keyword_fixture
+  assert_equal "0" "${#SHELL_CASE_STATES[@]}"
+  assert_equal "0" "$IN_FUNCTION"
+  assert_equal "0" "$CONTROL_FLOW_DEPTH"
+  assert_has_code "LEG039"
+}
+
+scan_case_keyword_fixture() {
+  scan_fixture \
+    'check_words() {' \
+    'for word in "${words[@]}"; do' \
+    'case "$word" in' \
+    '"(") paren_depth=$((paren_depth + 1)); continue ;;' \
+    'esac' \
+    'case "$word" in' \
+    '__SEQUENCE__|__AND__|__OR__) expecting_command="1"; continue ;;' \
+    'esac' \
+    'case "$word" in' \
+    "if|then|elif|else|fi|while|until|for|select|do|done|case|'esac') return 0 ;;" \
+    'esac' 'done' 'return 1' '}' 'docker build .'
+}
+
+test_function_structural_state_is_restored() {
+  reset_test_state
+  SELECT=("LEG039")
+  scan_fixture 'broken() {' 'if ready; then' 'work' '}' 'docker build .'
+  assert_equal "0" "$CONTROL_FLOW_DEPTH"
+  assert_equal "0" "$IF_DEPTH"
+  assert_has_code "LEG039"
 }
 
 main "$@"

@@ -60,7 +60,7 @@ is_shell_file() {
 
 shell_extension() {
   case "${1:-}" in
-    *.sh|*.bash|*.zsh|*.ksh) return 0 ;;
+    *.sh | *.bash | *.zsh | *.ksh) return 0 ;;
   esac
   return 1
 }
@@ -68,7 +68,7 @@ shell_extension() {
 shell_shebang() {
   local path="${1:-}"
   local first_line
-  first_line="$(sed -n '1p' "$path" 2>/dev/null)"
+  first_line="$(sed -n '1p' "$path" 2> /dev/null)"
   [[ "$first_line" == "#!"* ]] || return 1
   shell_runtime_allowed "${first_line#\#!}"
 }
@@ -76,16 +76,14 @@ shell_shebang() {
 shell_runtime_allowed() {
   local command="${1:-}"
   local runtime
-  command="$(shell_runtime_name "$command")"
+  trim_into command "$command"
+  command="${command#/usr/bin/env }"
+  while [[ "$command" == */ ]]; do
+    command="${command%/}"
+  done
+  command="${command##*/}"
   for runtime in "${EXECUTABLE_RUNTIMES[@]}"; do
     [[ "$command" == "$runtime" ]] && return 0
   done
   return 1
-}
-
-shell_runtime_name() {
-  local command="${1:-}"
-  command="$(trim "$command")"
-  command="${command#/usr/bin/env }"
-  printf '%s\n' "$(basename -- "$command")"
 }
