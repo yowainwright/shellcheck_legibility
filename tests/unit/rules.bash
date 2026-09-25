@@ -56,7 +56,10 @@ test_staged_hook_uses_index_config() {
   STAGED_HOOK_TEST_DIR="$(mktemp -d "$ROOT_DIR/.staged-hook-test.XXXXXX")"
   trap cleanup_staged_hook_test EXIT
   setup_staged_hook_fixture "$STAGED_HOOK_TEST_DIR"
-  prepare_staged_hook_config "$STAGED_HOOK_TEST_DIR"
+  prepare_staged_hook_config_source "$STAGED_HOOK_TEST_DIR"
+  output="$(env -i PATH="$PATH" TEST_LINTER_BIN="$ROOT_DIR/bin/shellcheck-legibility" "$STAGED_HOOK_TEST_DIR/scripts/setup/check-staged.sh" 2>&1)" || fail "fallback config should disable LEG041: $output"
+  [[ "$output" != *"LEG041"* ]] || fail "fallback config unexpectedly enabled LEG041: $output"
+  stage_staged_hook_config "$STAGED_HOOK_TEST_DIR"
   if output="$(env -i PATH="$PATH" TEST_LINTER_BIN="$ROOT_DIR/bin/shellcheck-legibility" "$STAGED_HOOK_TEST_DIR/scripts/setup/check-staged.sh" 2>&1)"; then
     fail "expected staged config to report LEG041"
   fi
@@ -104,13 +107,18 @@ prepare_staged_hook_file() {
   printf '%s\n' "unstaged contents" > "$dir/$file"
 }
 
-prepare_staged_hook_config() {
+prepare_staged_hook_config_source() {
+  local dir="${1:-}"
+  printf '%s\n' 'select: [LEG001]' > "$dir/.shellcheck-legibility.yml"
+  printf '%s\n' '#!/usr/bin/env bash' '# ordinary comment' 'printf ok' > "$dir/config-check.sh"
+  isolated_test_git -C "$dir" add -- config-check.sh
+}
+
+stage_staged_hook_config() {
   local dir="${1:-}"
   printf '%s\n' 'select: [LEG041]' > "$dir/.shellcheck-legibility.yml"
   isolated_test_git -C "$dir" add -- .shellcheck-legibility.yml
   printf '%s\n' 'select: [LEG001]' > "$dir/.shellcheck-legibility.yml"
-  printf '%s\n' '#!/usr/bin/env bash' '# ordinary comment' 'printf ok' > "$dir/config-check.sh"
-  isolated_test_git -C "$dir" add -- config-check.sh
 }
 
 cleanup_staged_hook_test() {
