@@ -8,10 +8,10 @@ import (
 	"github.com/yowainwright/shellcheck_legibility/internal/lint"
 )
 
-func TestIncompleteSourceIsNeverCached(t *testing.T) {
+func TestMalformedSourceIsNeverCached(t *testing.T) {
 	dir := workspaceTemp(t)
 	t.Chdir(dir)
-	writeTestFile(t, "broken.sh", "run() { create_user true;\n")
+	writeTestFile(t, "broken.sh", "unexpected)\n")
 	options := cliOptions{CacheDir: filepath.Join(dir, "cache")}
 	calls := 0
 	fallback := func(string, cliOptions) ([]lint.Diagnostic, error) { calls++; return nil, nil }

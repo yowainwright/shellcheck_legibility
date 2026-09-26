@@ -57,11 +57,8 @@ func Scan(path string, source []byte, config Config) ([]Diagnostic, error) {
 	s.code = bytes.Clone(source)
 	s.lines = strings.Split(string(source), "\n")
 	s.reported = make(map[string]bool)
-	parser := syntax.NewParser(syntax.KeepComments(true), syntax.Variant(language(path, source)))
+	parser := syntax.NewParser(syntax.KeepComments(true), syntax.RecoverErrors(3), syntax.Variant(language(path, source)))
 	file, err := parser.Parse(bytes.NewReader(source), path)
-	if err != nil {
-		return nil, err
-	}
 	s.prepareCode(file)
 	s.checkFiles()
 	s.checkComments()
@@ -69,7 +66,7 @@ func Scan(path string, source []byte, config Config) ([]Diagnostic, error) {
 	s.checkStructure(file)
 	s.checkTopLevel(file)
 	slices.SortStableFunc(s.diagnostics, compareDiagnostics)
-	return s.diagnostics, nil
+	return s.diagnostics, err
 }
 
 func language(path string, source []byte) syntax.LangVariant {
@@ -156,6 +153,9 @@ func (s *scanner) restoreSubstitutions(node syntax.Node) {
 			return true
 		}
 		start, end := substitution.Pos().Offset(), substitution.End().Offset()
+		if end < start || end > uint(len(s.source)) {
+			return false
+		}
 		copy(s.code[start:end], s.source[start:end])
 		return false
 	})

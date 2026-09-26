@@ -90,15 +90,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --verify-tag --generate-notes --draft
+          if RELEASE=$(gh release view "$RELEASE_TAG" --json isDraft,url); then
+            IS_DRAFT=$(jq -r '.isDraft' <<< "$RELEASE")
           else
-            gh release edit "$RELEASE_TAG" --draft
+            gh release create "$RELEASE_TAG" --verify-tag --generate-notes --draft
+            IS_DRAFT=true
           fi
           for archive in dist/*.tar.gz; do
             gh release upload "$RELEASE_TAG" "$archive" --clobber
           done
-          gh release edit "$RELEASE_TAG" --draft=false
+          if [[ "$IS_DRAFT" == "true" ]]; then
+            gh release edit "$RELEASE_TAG" --draft=false
+          fi
           RELEASE_URL=$(gh release view "$RELEASE_TAG" --json url --jq .url)
           printf 'Release: %s\n' "$RELEASE_URL" >> "$GITHUB_STEP_SUMMARY"
 

@@ -177,11 +177,11 @@ func checkPaths(paths []string, options cliOptions, config lint.Config, fallback
 	var failures []error
 	for _, path := range paths {
 		result, err := checkFile(path, options, config, fallback, cache)
+		findings = append(findings, result...)
 		if err != nil {
 			failures = append(failures, fmt.Errorf("%s: %w", path, err))
 			continue
 		}
-		findings = append(findings, result...)
 	}
 	return findings, errors.Join(failures...)
 }
@@ -195,14 +195,18 @@ func checkFile(path string, options cliOptions, config lint.Config, fallback fal
 	if saved, ok := cache.read(key, data); ok {
 		return saved, nil
 	}
-	result, err := lint.Scan(path, data, config)
-	if err != nil && fallback != nil {
-		return fallback(path, options)
+	result, scanErr := lint.Scan(path, data, config)
+	if scanErr != nil && fallback != nil {
+		compatibilityResult, fallbackErr := fallback(path, options)
+		if fallbackErr == nil {
+			return compatibilityResult, nil
+		}
+		return result, errors.Join(scanErr, fallbackErr)
 	}
-	if err == nil {
+	if scanErr == nil {
 		cache.write(key, data, result)
 	}
-	return result, err
+	return result, scanErr
 }
 
 func writeDiagnostics(writer io.Writer, diagnostics []lint.Diagnostic, format string) error {

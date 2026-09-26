@@ -134,12 +134,12 @@ func TestIncompleteShellKeepsFeedbackWithoutExecutingSource(t *testing.T) {
 	}
 }
 
-func TestMissingBashReportsAnError(t *testing.T) {
+func TestIncompleteShellDoesNotRequireBash(t *testing.T) {
 	enterTestWorkspace(t)
-	writeRuleFixture(t, ruleFixture{path: "incomplete.sh", source: "run() {\n"})
+	writeRuleFixture(t, ruleFixture{path: "incomplete.sh", source: "run() { create_user true;\n"})
 	t.Setenv("PATH", "")
-	output, status := runBinary(t, "", "check", "incomplete.sh", "--no-cache")
-	if status != 2 || !strings.Contains(output, "Bash is required") {
+	output, status := runBinary(t, "", "check", "incomplete.sh", "--select", "LEG035", "--no-cache")
+	if status != 1 || !strings.Contains(output, "LEG035") {
 		t.Fatalf("status %d: %s", status, output)
 	}
 }
