@@ -106,8 +106,13 @@ jobs:
             for archive in dist/*.tar.gz; do
               ARCHIVE_NAME=${archive##*/}
               EXPECTED_DIGEST="sha256:$(sha256sum "$archive" | cut -d' ' -f1)"
-              ACTUAL_DIGEST=$(jq -r --arg name "$ARCHIVE_NAME" \
-                '[.assets[] | select(.name == $name) | .digest][0] // empty' <<< "$RELEASE_ASSETS")
+              ASSET=$(jq -c --arg name "$ARCHIVE_NAME" \
+                '[.assets[] | select(.name == $name)][0] // empty' <<< "$RELEASE_ASSETS")
+              if [[ -z "$ASSET" ]]; then
+                gh release upload "$RELEASE_TAG" "$archive"
+                continue
+              fi
+              ACTUAL_DIGEST=$(jq -r '.digest // empty' <<< "$ASSET")
               if [[ "$ACTUAL_DIGEST" != "$EXPECTED_DIGEST" ]]; then
                 echo "::error::Published release asset $ARCHIVE_NAME differs from the rebuilt archive; refusing to replace public assets."
                 exit 1
