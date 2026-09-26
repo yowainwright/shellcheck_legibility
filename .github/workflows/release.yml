@@ -60,12 +60,11 @@ jobs:
         run: |
           REF=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$RELEASE_TAG" |
             jq -r --arg tag "$RELEASE_TAG" '.[] | select(.ref == "refs/tags/" + $tag) | .ref')
-          RELEASE=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
-            jq -sc --arg tag "$RELEASE_TAG" 'map(.[] | select(.tag_name == $tag)) | first // {}')
-          RELEASE_ID=$(jq -r '.id // empty' <<< "$RELEASE")
-          TARGET=$(jq -r '.target_commitish // empty' <<< "$RELEASE")
-          echo "ref=${REF:-${TARGET:-$GITHUB_SHA}}" >> "$GITHUB_OUTPUT"
-          echo "release_id=$RELEASE_ID" >> "$GITHUB_OUTPUT"
+          if [[ -z "$REF" ]]; then
+            echo "::error::Release tag $RELEASE_TAG does not exist."
+            exit 1
+          fi
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
 
       - name: Check out release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -90,21 +89,18 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_ID: ${{ steps.source.outputs.release_id }}
         run: |
-          if [[ -z "$RELEASE_ID" ]]; then
-            gh release create "$RELEASE_TAG" dist/*.tar.gz --target "$(git rev-parse HEAD)" --generate-notes
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --generate-notes --draft
+          else
+            gh release edit "$RELEASE_TAG" --draft
           fi
-          RELEASE=$(gh release view "$RELEASE_TAG" --json assets,isDraft,url)
           for archive in dist/*.tar.gz; do
-            if ! jq -e --arg name "${archive##*/}" '.assets[] | select(.name == $name)' <<< "$RELEASE" >/dev/null; then
-              gh release upload "$RELEASE_TAG" "$archive"
-            fi
+            gh release upload "$RELEASE_TAG" "$archive" --clobber
           done
-          if jq -e '.isDraft' <<< "$RELEASE" >/dev/null; then
-            gh release edit "$RELEASE_TAG" --draft=false
-          fi
-          printf 'Release: %s\n' "$(jq -r '.url' <<< "$RELEASE")" >> "$GITHUB_STEP_SUMMARY"
+          gh release edit "$RELEASE_TAG" --draft=false
+          RELEASE_URL=$(gh release view "$RELEASE_TAG" --json url --jq .url)
+          printf 'Release: %s\n' "$RELEASE_URL" >> "$GITHUB_STEP_SUMMARY"
 
   homebrew:
     name: Open Homebrew formula PR

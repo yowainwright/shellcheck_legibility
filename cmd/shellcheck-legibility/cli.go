@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -153,14 +154,14 @@ func runCheck(options cliOptions, stdout io.Writer, fallback fallbackScanner) (i
 		return 2, err
 	}
 	findings, err := checkPaths(paths, options, config, fallback)
+	writeErr := writeDiagnostics(stdout, findings, options.Format)
 	if err != nil {
-		return 2, err
+		return 2, errors.Join(err, writeErr)
 	}
-	err = writeDiagnostics(stdout, findings, options.Format)
 	if len(findings) != 0 && !options.ExitZero {
-		return 1, err
+		return 1, writeErr
 	}
-	return 0, err
+	return 0, writeErr
 }
 
 func usage(writer io.Writer) {
@@ -173,14 +174,16 @@ func usage(writer io.Writer) {
 func checkPaths(paths []string, options cliOptions, config lint.Config, fallback fallbackScanner) ([]lint.Diagnostic, error) {
 	cache := newCache(options.CacheDir, config)
 	findings := []lint.Diagnostic{}
+	var failures []error
 	for _, path := range paths {
 		result, err := checkFile(path, options, config, fallback, cache)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
+			failures = append(failures, fmt.Errorf("%s: %w", path, err))
+			continue
 		}
 		findings = append(findings, result...)
 	}
-	return findings, nil
+	return findings, errors.Join(failures...)
 }
 
 func checkFile(path string, options cliOptions, config lint.Config, fallback fallbackScanner, cache resultCache) ([]lint.Diagnostic, error) {

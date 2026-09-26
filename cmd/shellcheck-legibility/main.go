@@ -11,7 +11,7 @@ var version = "0.2.1"
 
 func main() {
 	if os.Getenv("SHELLCHECK_LEGIBILITY_ENGINE") == "bash" {
-		os.Exit(bash.Run(os.Args[1:], os.Stdout, os.Stderr))
+		os.Exit(bash.Run(os.Args[1:], os.Stdout, os.Stderr, version))
 	}
 	os.Exit(runCLI(os.Args[1:], os.Stdout, os.Stderr, version, scanWithBash))
 }
@@ -27,5 +27,5 @@ func scanWithBash(path string, options cliOptions) ([]lint.Diagnostic, error) {
 	if options.Ignore != "" {
 		args = append(args, "--ignore", options.Ignore)
 	}
-	return bash.Check(args)
+	return bash.Check(args, version)
 }

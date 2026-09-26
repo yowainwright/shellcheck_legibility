@@ -21,7 +21,7 @@ func (s *scanner) checkComments() {
 		}
 		column := utf8.RuneCountInString(s.lines[line-1][:comment.Hash.Col()-1]) + 1
 		if line == previous+1 && previous > 0 {
-			s.add(line, column, line, 0, "LEG043", "Update or remove the adjacent comment instead of stacking another comment.")
+			s.add(line, column, line, 1, "LEG043", "Update or remove the adjacent comment instead of stacking another comment.")
 		}
 		previous = line
 		s.checkAttribution(line, column, body)

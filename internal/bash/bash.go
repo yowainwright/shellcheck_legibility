@@ -16,9 +16,9 @@ import (
 //go:embed defaults.bash util.bash rules.bash config.bash cli.bash files.bash cache.bash lint.bash output.bash
 var sources embed.FS
 
-func Check(args []string) ([]lint.Diagnostic, error) {
+func Check(args []string, version string) ([]lint.Diagnostic, error) {
 	var stdout, stderr bytes.Buffer
-	status := Run(args, &stdout, &stderr)
+	status := Run(args, &stdout, &stderr, version)
 	if status != 0 && status != 1 {
 		return nil, fmt.Errorf("Bash compatibility check: %s", strings.TrimSpace(stderr.String()))
 	}
@@ -29,8 +29,8 @@ func Check(args []string) ([]lint.Diagnostic, error) {
 	return diagnostics, nil
 }
 
-func Run(args []string, stdout, stderr io.Writer) int {
-	command, err := newCommand(args)
+func Run(args []string, stdout, stderr io.Writer, version string) int {
+	command, err := newCommand(args, version)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
@@ -46,7 +46,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func newCommand(args []string) (*exec.Cmd, error) {
+func newCommand(args []string, version string) (*exec.Cmd, error) {
 	source, err := script()
 	if err != nil {
 		return nil, err
@@ -57,7 +57,10 @@ func newCommand(args []string) (*exec.Cmd, error) {
 	}
 	arguments := append([]string{"/dev/stdin"}, args...)
 	command := exec.Command("bash", arguments...)
-	command.Env = append(os.Environ(), "SHELLCHECK_LEGIBILITY_BINARY="+executable)
+	command.Env = append(os.Environ(),
+		"SHELLCHECK_LEGIBILITY_BINARY="+executable,
+		"SHELLCHECK_LEGIBILITY_VERSION="+version,
+	)
 	command.Stdin = strings.NewReader(source)
 	return command, nil
 }

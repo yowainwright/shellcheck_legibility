@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 
-VERSION="0.2.1"
+VERSION="${SHELLCHECK_LEGIBILITY_VERSION:-0.2.1}"
 OUTPUT_FORMAT="text"
 EXIT_ZERO="0"
 CONFIG_PATH=""
