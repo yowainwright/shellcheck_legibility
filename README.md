@@ -15,9 +15,13 @@
 [license-badge]: https://img.shields.io/github/license/yowainwright/shellcheck_legibility
 [license]: https://github.com/yowainwright/shellcheck_legibility/blob/main/LICENSE
 
-`shellcheck-legibility` makes shell scripts easier to review. It works best alongside [ShellCheck](https://github.com/koalaman/shellcheck) (correctness, portability, quoting, and semantics) and [shfmt](https://github.com/mvdan/sh#shfmt) (formatting).
+## Why was this written?
 
-Releases ship a native Go engine using [mvdan's shell parser](https://github.com/mvdan/sh). Set `SHELLCHECK_LEGIBILITY_ENGINE=bash` to use the Bash compatibility engine instead – that mode requires Bash. ShellCheck is a dev lint dependency, not a runtime one.
+> Working with LLMs for the majority of my work, I find the way that I code and read code has changed. This project contains rules I find useful for keeping Bash more readable when written mainly by LLMs.
+
+## TLDR;
+
+The goal of rules in this package are to make code readable for reviewing lots of code and avoiding things that have a high probability of complexity or confusion.
 
 ## Install
 
@@ -28,7 +32,8 @@ brew install yowainwright/tap/shellcheck-legibility
 
 ## Agent sessions
 
-Turn on the cache in the shell that boots your agent. Existing lint hooks just pick it up automatically:
+Turn on the cache in the shell that boots your agent. 
+Existing lint hooks just pick it up automatically:
 
 ```sh
 export SHELLCHECK_LEGIBILITY_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/shellcheck-legibility"
@@ -44,7 +49,6 @@ Benchmark uncached vs cached repo checks with `make benchmark` (needs Hyperfine)
 
 Only implemented rules are listed here. Each links to its do / don't diff.
 
-<!-- implemented rule codes and names from internal/bash/rules.bash -->
 
 | Code | Rule | Summary |
 | --- | --- | --- |
@@ -615,7 +619,7 @@ automated-comment-identifiers = ["ai", "chatgpt", "claude", "codex", "copilot", 
 Selectors use the same model as the other legibility tools: `select`, `ignore`, rule codes, rule names, and `LEG`.
 Comment rules are policy opt-ins and are excluded from the broad `LEG` and `all` selectors.
 
-## Tests
+## Contributing
 
 Build the native engine with Go 1.26 or later:
 
@@ -623,7 +627,7 @@ Build the native engine with Go 1.26 or later:
 make build
 ```
 
-This creates the ignored `bin/shellcheck-legibility` binary. Rebuild after changing Go or embedded Bash source. Set `SHELLCHECK_LEGIBILITY_ENGINE=bash` to compare against the Bash compatibility implementation.
+This creates the ignored `bin/shellcheck-legibility` binary.
 
 Go unit tests live beside the code and have their own cases. Integration tests live in `tests/integration/`; packaged installation tests live in `tests/e2e/`. See [Contributing](.github/CONTRIBUTING.md) for the layout and rule development workflow.
 
@@ -648,3 +652,9 @@ make check
 ```sh
 gh workflow run release.yml --ref main -f tag=v0.2.6
 ```
+
+---
+
+## License
+
+[MIT](./LICENSE)
