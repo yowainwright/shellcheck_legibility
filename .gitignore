@@ -5,6 +5,7 @@
 *.exe
 .build/
 /bin/
+/dist/
 *.exe~
 *.dll
 *.so

@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+write_dependency_license() {
+  local output_dir="${1:?}" module="${2:?}" name="${3:?}"
+  local module_dir
+  module_dir="$(go -C "$ROOT_DIR" list -m -f '{{.Dir}}' "$module")"
+  cp "$module_dir/LICENSE" "$output_dir/$name"
+  if [[ -f "$module_dir/NOTICE" ]]; then
+    cp "$module_dir/NOTICE" "$output_dir/$name-NOTICE"
+    return
+  fi
+  rm -f "$output_dir/$name-NOTICE"
+}
+
+main() {
+  local output_dir="${1:?usage: package-licenses OUTPUT_DIRECTORY}"
+  mkdir -p "$output_dir"
+  cp "$ROOT_DIR/LICENSE" "$output_dir/shellcheck-legibility"
+  cp "$(go env GOROOT)/LICENSE" "$output_dir/go"
+  write_dependency_license "$output_dir" mvdan.cc/sh/v3 mvdan-sh
+  write_dependency_license "$output_dir" github.com/pelletier/go-toml/v2 go-toml
+  write_dependency_license "$output_dir" go.yaml.in/yaml/v3 go-yaml
+}
+
+main "$@"

@@ -649,12 +649,7 @@ make check
 
 ## Publishing
 
-Push a `vMAJOR.MINOR.PATCH` tag to run the release workflow. It validates the tagged source, publishes the platform archives, and opens a Homebrew formula pull request.
-
-ex
-```sh
-gh workflow run release.yml --ref main -f tag=v<semver> # 0.0.0
-```
+Push a `vMAJOR.MINOR.PATCH` tag to validate and publish the release. The workflow also updates Homebrew after its formula validation passes.
 
 ---
 
