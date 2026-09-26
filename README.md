@@ -15,11 +15,9 @@
 [license-badge]: https://img.shields.io/github/license/yowainwright/shellcheck_legibility
 [license]: https://github.com/yowainwright/shellcheck_legibility/blob/main/LICENSE
 
-Shell legibility checks that sit beside ShellCheck.
+`shellcheck-legibility` makes shell scripts easier to review. It works best alongside [ShellCheck](https://github.com/koalaman/shellcheck) (correctness, portability, quoting, and semantics) and [shfmt](https://github.com/mvdan/sh#shfmt) (formatting).
 
-ShellCheck should own correctness, portability, quoting, and shell semantics. This project focuses on reviewability: control-flow depth, operator-heavy expressions, long functions, function-first script shape, defaulted function args, repeated comparisons, direct shell smoke tests, and patterns that make scripts harder to scan.
-
-Releases include a native Go engine using [mvdan's shell parser](https://github.com/mvdan/sh). Set `SHELLCHECK_LEGIBILITY_ENGINE=bash` to opt into the Bash compatibility engine; that mode requires Bash. ShellCheck is a development lint dependency, not a runtime dependency.
+Releases ship a native Go engine using [mvdan's shell parser](https://github.com/mvdan/sh). Set `SHELLCHECK_LEGIBILITY_ENGINE=bash` to use the Bash compatibility engine instead – that mode requires Bash. ShellCheck is a dev lint dependency, not a runtime one.
 
 ## Install
 
@@ -30,21 +28,21 @@ brew install yowainwright/tap/shellcheck-legibility
 
 ## Agent sessions
 
-Enable the cache in the shell that starts your agent. Existing lint hooks inherit it:
+Turn on the cache in the shell that boots your agent. Existing lint hooks just pick it up automatically:
 
 ```sh
 export SHELLCHECK_LEGIBILITY_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/shellcheck-legibility"
 ```
 
-Unchanged files replay their diagnostics and exit status. File content, rule settings, paths, and engine changes invalidate cached results. Editing a file replaces its native cache entry; changing settings or the engine creates a separate entry. Cache entries contain data, never executable shell code. If caching is unavailable, checks still run.
+Unchanged files replay their diagnostics and exit status. File content, rule settings, paths, and engine changes all invalidate cached results. Editing a file replaces its cache entry. Changing settings or the engine creates a separate entry. Cache entries hold data only – never executable shell code. If caching isn't available, checks still run.
 
-Use `--cache` for individual invocations or `--no-cache` for a full rescan. This caches shellcheck-legibility; ShellCheck remains a separate correctness check.
+Use `--cache` for individual runs or `--no-cache` for a full rescan. This caches shellcheck-legibility specifically; ShellCheck stays a separate correctness check.
 
-Benchmark uncached and cached repository checks with `make benchmark` (requires Hyperfine).
+Benchmark uncached vs cached repo checks with `make benchmark` (needs Hyperfine).
 
 ## Rules
 
-Only implemented rules are listed here. Each rule links to its do / don't diff example.
+Only implemented rules are listed here. Each links to its do / don't diff.
 
 <!-- implemented rule codes and names from internal/bash/rules.bash -->
 
@@ -101,7 +99,7 @@ Limit readable operators inside a single command expression.
 
 ### `hoist-if-operators`
 
-Prefer a named check before an operator-heavy `if`, `elif`, `while`, or `until` condition. Quoted data and case-pattern separators do not count as shell operators; commands inside substitutions still count.
+Prefer a named check before an operator-heavy `if`, `elif`, `while`, or `until` condition. Quoted data and case-pattern separators don't count as shell operators; commands inside substitutions still do.
 
 #### options
 
@@ -214,7 +212,7 @@ None.
 
 ### `prefer-guard-clauses`
 
-Prefer guard clauses over wrapping a whole function body in one branch. Existing guard clauses and optional branches alongside other work are allowed.
+Prefer guard clauses over wrapping a whole function body in one branch. Existing guard clauses and optional branches alongside other work are fine.
 
 #### options
 
@@ -270,7 +268,7 @@ Prefer smoke-testing the installed command instead of invoking entry scripts dir
 
 #### options
 
-- `direct-shell-entry-patterns`: direct entry paths that should not be shell-invoked in smoke tests.
+- `direct-shell-entry-patterns`: direct entry paths that shouldn't be shell-invoked in smoke tests.
 - `executable-runtimes`: shell runtimes checked in commands.
 
 <a id="no-direct-shell-bin-smoke-diff"></a>
@@ -386,7 +384,7 @@ Prefer `case` over long `elif` chains comparing the same value.
 
 ### `no-bool-literal-args`
 
-Avoid unquoted boolean literal arguments whose meaning is only clear at the call site. Commands such as `true`, `false`, and `command true` are allowed, including after `&&` or `||`.
+Avoid unquoted boolean literal arguments whose meaning is only clear at the call site. Commands like `true`, `false`, and `command true` are fine, including after `&&` or `||`.
 
 #### options
 
@@ -492,11 +490,11 @@ None.
 
 ### `no-unmatched-comments`
 
-Reject comments that do not match a configured regular-expression matcher, prefix identifier, or suffix identifier.
+Reject comments that don't match a configured regular-expression matcher, prefix identifier, or suffix identifier.
 
 Shebangs, ShellCheck directives, and `noqa` directives are ignored. No matcher or identifier is configured by default, so selecting this rule directly rejects ordinary comments.
 
-This repository selects all three comment rules in `.shellcheck-legibility.yml` and allows only the `!NOTE` prefix. `AGENTS.md` reserves that marker for code comments explicitly requested by a human.
+This repo selects all three comment rules in `.shellcheck-legibility.yml` and allows only the `!NOTE` prefix. `AGENTS.md` reserves that marker for code comments explicitly requested by a human.
 
 #### options
 
@@ -541,7 +539,7 @@ Reject explicit automated authorship and generation signatures in comments. Ordi
 + retry_in_provider_order
 ```
 
-Structured `@author` tags and phrases such as `generated by <identifier>` or `<identifier>-generated` are rejected. Unmarked prose is not classified.
+Structured `@author` tags and phrases like `generated by <identifier>` or `<identifier>-generated` are rejected. Unmarked prose is not classified.
 
 ---
 
@@ -574,9 +572,9 @@ comment-prefix-identifiers: [KEEP]
 comment-suffix-identifiers: ["@keep"]
 ```
 
-This rejects unmarked comments, explicit automated attribution, and adjacent comments. Configure identifiers only for established repository conventions; do not add a marker solely to make a new comment pass.
+This rejects unmarked comments, explicit automated attribution, and adjacent comments. Configure identifiers only for established repo conventions – don't add a marker just to make a new comment pass.
 
-Use `--exit-zero` for advisory feedback. Enforcement should use the same committed configuration without `--exit-zero`.
+Use `--exit-zero` for advisory feedback. Enforcement should use the same committed config without `--exit-zero`.
 
 ## Use
 
@@ -588,13 +586,13 @@ bin/shellcheck-legibility check . --output-format json
 
 Run `make build` first when working from source. Installed releases use `shellcheck-legibility` directly.
 
-Directory scans skip symlinks. An explicitly named symlink to a regular shell file is checked under that path; symlinked directories are not traversed. Overlapping targets are checked once per absolute path, preserving the first path spelling in diagnostics. Different symlink paths remain distinct because filename rules depend on the path.
+Directory scans skip symlinks. An explicitly named symlink to a regular shell file is checked under that path; symlinked directories aren't traversed. Overlapping targets are checked once per absolute path, preserving the first path spelling in diagnostics. Different symlink paths stay distinct because filename rules depend on the path.
 
-Exclusions apply to directory scans; explicitly named files bypass them. Exclusion entries match exact discovered paths or directory components, not globs or arbitrary filename suffixes. For example, `vendor` skips a directory with that name anywhere in the scan. To exclude one file from `check .`, use its discovered path, such as `./scripts/generated.sh`.
+Exclusions apply to directory scans; explicitly named files bypass them. Exclusion entries match exact discovered paths or directory components – not globs or arbitrary filename suffixes. For example, `vendor` skips a directory with that name anywhere in the scan. To exclude one file from `check .`, use its discovered path, like `./scripts/generated.sh`.
 
 ## Configuration
 
-Configuration is loaded from the first matching file found while searching upward:
+Config loads from the first matching file found while searching upward:
 
 - `.shellcheck-legibilityrc` with `key=value` or `key: value` assignments.
 - `.shellcheck-legibility.yml` or `.shellcheck-legibility.yaml` with YAML mappings and inline or block lists.
@@ -627,15 +625,15 @@ make build
 
 This creates the ignored `bin/shellcheck-legibility` binary. Rebuild after changing Go or embedded Bash source. Set `SHELLCHECK_LEGIBILITY_ENGINE=bash` to compare against the Bash compatibility implementation.
 
-Go unit tests live beside the code and contain their own cases. Integration tests live in `tests/integration/`; packaged installation tests live in `tests/e2e/`. See [Contributing](.github/CONTRIBUTING.md) for the layout and rule development workflow.
+Go unit tests live beside the code and have their own cases. Integration tests live in `tests/integration/`; packaged installation tests live in `tests/e2e/`. See [Contributing](.github/CONTRIBUTING.md) for the layout and rule development workflow.
 
-Install the repository's pre-commit hook once per clone:
+Install the repo's pre-commit hook once per clone:
 
 ```sh
 make install-hooks
 ```
 
-The setup script installs `.git/hooks/pre-commit`, preserves unmanaged hooks, and skips CI. The hook runs ShellCheck, shfmt, unit and integration tests, system Bash compatibility, and configured legibility checks for staged files. `make check` runs the full-repository legibility scan and packaged-binary Docker tests too.
+The setup script installs `.git/hooks/pre-commit`, preserves unmanaged hooks, and skips CI. The hook runs ShellCheck, shfmt, unit and integration tests, system Bash compatibility, and configured legibility checks for staged files. `make check` runs the full-repo legibility scan and packaged-binary Docker tests too.
 
 ```sh
 make unit
