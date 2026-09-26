@@ -36,47 +36,23 @@ validate_arguments() {
   validate_target "$2"
 }
 
-initialize_bundle_sources() {
-  BUNDLE_SOURCES=(
-    lib/defaults.bash
-    lib/util.bash
-    lib/rules.bash
-    lib/config.bash
-    lib/cli.bash
-    lib/files.bash
-    lib/lint.bash
-    lib/output.bash
-  )
-}
-
-write_source() {
-  local version="${1:?}"
-  local source="${2:?}"
-  if [[ "$source" != "lib/defaults.bash" ]]; then
-    sed -n '/^VERSION=/!p' "$ROOT_DIR/$source"
-    return
-  fi
-  sed "s/^VERSION=\"[^\"]*\"$/VERSION=\"$version\"/" "$ROOT_DIR/$source"
-}
-
 write_bundle() {
   local version="${1:?}"
   local bundle_path="${2:?}"
-  local source
-
-  {
-    printf '%s\n' '#!/usr/bin/env bash' 'set -u'
-    for source in "${BUNDLE_SOURCES[@]}"; do
-      write_source "$version" "$source"
-    done
-    printf '%s\n' 'main "$@"'
-  } > "$bundle_path"
-  chmod +x "$bundle_path"
+  local target="${3:?}"
+  export GOCACHE="$ROOT_DIR/.build/go-cache"
+  export GOTMPDIR="$ROOT_DIR/.build/tmp"
+  mkdir -p "$GOCACHE" "$GOTMPDIR"
+  CGO_ENABLED=0 GOOS="${target%-*}" GOARCH="${target#*-}" \
+    go -C "$ROOT_DIR" build -buildvcs=false -trimpath \
+    -ldflags "-s -w -X main.version=$version" -o "$bundle_path" ./cmd/shellcheck-legibility
 }
 
 validate_bundle() {
   local bundle_path="${1:?}"
   local version="${2:?}"
+  local target="${3:?}"
+  [[ "$target" == "$(go env GOOS)-$(go env GOARCH)" ]] || return 0
   local reported_version
   reported_version="$($bundle_path --version)"
   if [[ "$reported_version" != "$version" ]]; then
@@ -91,6 +67,18 @@ write_license_files() {
   mkdir -p "$stage_dir/LICENSES"
   cp "$ROOT_DIR/LICENSE" "$stage_dir/LICENSE"
   cp "$ROOT_DIR/LICENSE" "$stage_dir/LICENSES/shellcheck-legibility"
+  cp "$(go env GOROOT)/LICENSE" "$stage_dir/LICENSES/go"
+  write_dependency_license "$stage_dir" mvdan.cc/sh/v3 mvdan-sh
+  write_dependency_license "$stage_dir" github.com/pelletier/go-toml/v2 go-toml
+  write_dependency_license "$stage_dir" go.yaml.in/yaml/v3 go-yaml
+}
+
+write_dependency_license() {
+  local stage_dir="${1:?}" module="${2:?}" name="${3:?}"
+  local module_dir
+  module_dir="$(go -C "$ROOT_DIR" list -m -f '{{.Dir}}' "$module")"
+  cp "$module_dir/LICENSE" "$stage_dir/LICENSES/$name"
+  [[ ! -f "$module_dir/NOTICE" ]] || cp "$module_dir/NOTICE" "$stage_dir/LICENSES/$name-NOTICE"
 }
 
 set_archive_timestamps() {
@@ -100,7 +88,7 @@ set_archive_timestamps() {
     "$stage_dir/shellcheck-legibility" \
     "$stage_dir/LICENSE" \
     "$stage_dir/LICENSES" \
-    "$stage_dir/LICENSES/shellcheck-legibility"
+    "$stage_dir/LICENSES/"*
 }
 
 cleanup() {
@@ -113,6 +101,7 @@ initialize_release_stage() {
   local output_dir
   output_dir="$(dirname "$output")"
   mkdir -p "$output_dir"
+  output_dir="$(cd "$output_dir" && pwd)"
   STAGE_DIR="$(mktemp -d "$output_dir/.shellcheck-legibility.XXXXXX")"
   trap cleanup EXIT
 }
@@ -124,11 +113,10 @@ main() {
 
   ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   validate_arguments "$@"
-  initialize_bundle_sources
   initialize_release_stage "$output"
   bundle_path="$STAGE_DIR/shellcheck-legibility"
-  write_bundle "$version" "$bundle_path"
-  validate_bundle "$bundle_path" "$version"
+  write_bundle "$version" "$bundle_path" "$2"
+  validate_bundle "$bundle_path" "$version" "$2"
   write_license_files "$STAGE_DIR"
   set_archive_timestamps "$STAGE_DIR"
   export COPYFILE_DISABLE=1

@@ -42,10 +42,14 @@ write_json_diagnostic() {
 
 write_json_fields() {
   local index="${1:-}"
-  printf '"path":"%s",' "$(json_escape "${DIAG_PATHS[$index]}")"
+  local path rule message
+  json_escape_into path "${DIAG_PATHS[$index]}"
+  json_escape_into rule "${DIAG_RULES[$index]}"
+  json_escape_into message "${DIAG_MESSAGES[$index]}"
+  printf '"path":"%s",' "$path"
   printf '"line":%s,' "${DIAG_LINES[$index]}"
   printf '"column":%s,' "${DIAG_COLUMNS[$index]}"
   printf '"code":"%s",' "${DIAG_CODES[$index]}"
-  printf '"rule":"%s",' "$(json_escape "${DIAG_RULES[$index]}")"
-  printf '"message":"%s"' "$(json_escape "${DIAG_MESSAGES[$index]}")"
+  printf '"rule":"%s",' "$rule"
+  printf '"message":"%s"' "$message"
 }

@@ -23,6 +23,22 @@ lowercase() {
   printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]'
 }
 
+lowercase_into() {
+  local destination="${1:?}" lowered="${2:-}"
+  local upper=ABCDEFGHIJKLMNOPQRSTUVWXYZ lower=abcdefghijklmnopqrstuvwxyz index letter
+  case "$lowered" in
+    *[!\ -~]*) lowered="$(lowercase "$lowered")" ;;
+    *)
+      for ((index = 0; index < 26; index++)); do
+        letter="${upper:index:1}"
+        [[ "$lowered" == *"$letter"* ]] || continue
+        lowered="${lowered//"$letter"/${lower:index:1}}"
+      done
+      ;;
+  esac
+  printf -v "$destination" '%s' "$lowered"
+}
+
 strip_comment() {
   local line="${1:-}"
   printf '%s\n' "${line%%#*}"
@@ -257,11 +273,18 @@ count_occurrences_into() {
 }
 
 json_escape() {
-  local value="${1:-}"
+  local escaped
+  json_escape_into escaped "${1:-}"
+  printf '%s\n' "$escaped"
+}
+
+json_escape_into() {
+  local output="${1:?}"
+  local value="${2:-}"
   value="${value//\\/\\\\}"
   value="${value//\"/\\\"}"
   value="${value//$'\n'/\\n}"
-  printf '%s\n' "$value"
+  printf -v "$output" '%s' "$value"
 }
 
 first_word() {

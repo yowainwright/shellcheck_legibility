@@ -4,26 +4,25 @@
 set -u
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-STAGED_HOOK_TEST_DIR=""
 
 # shellcheck disable=SC1091
-# shellcheck source=../../lib/defaults.bash
-source "$ROOT_DIR/lib/defaults.bash"
+# shellcheck source=defaults.bash
+source "$ROOT_DIR/internal/bash/defaults.bash"
 # shellcheck disable=SC1091
-# shellcheck source=../../lib/util.bash
-source "$ROOT_DIR/lib/util.bash"
+# shellcheck source=util.bash
+source "$ROOT_DIR/internal/bash/util.bash"
 # shellcheck disable=SC1091
-# shellcheck source=../../lib/config.bash
-source "$ROOT_DIR/lib/config.bash"
+# shellcheck source=config.bash
+source "$ROOT_DIR/internal/bash/config.bash"
 # shellcheck disable=SC1091
-# shellcheck source=../../lib/rules.bash
-source "$ROOT_DIR/lib/rules.bash"
+# shellcheck source=rules.bash
+source "$ROOT_DIR/internal/bash/rules.bash"
 # shellcheck disable=SC1091
-# shellcheck source=../../lib/files.bash
-source "$ROOT_DIR/lib/files.bash"
+# shellcheck source=files.bash
+source "$ROOT_DIR/internal/bash/files.bash"
 # shellcheck disable=SC1091
-# shellcheck source=../../lib/lint.bash
-source "$ROOT_DIR/lib/lint.bash"
+# shellcheck source=lint.bash
+source "$ROOT_DIR/internal/bash/lint.bash"
 
 main() {
   test_version_metadata
@@ -33,97 +32,8 @@ main() {
   test_config_formats
   test_false_positive_regressions
   test_shell_syntax_regressions
-  test_staged_hook_uses_index_content
-  test_staged_hook_uses_index_config
+  test_scanner_fast_path_regressions
   printf '%s\n' "ok"
-}
-
-test_staged_hook_uses_index_content() {
-  local file output
-  STAGED_HOOK_TEST_DIR="$(mktemp -d "$ROOT_DIR/.staged-hook-test.XXXXXX")"
-  trap cleanup_staged_hook_test EXIT
-  setup_staged_hook_fixture "$STAGED_HOOK_TEST_DIR"
-  file=$'nested/odd\npath[1].sh'
-  prepare_staged_hook_file "$STAGED_HOOK_TEST_DIR" "$file"
-  output="$(env -i PATH="$PATH" "$STAGED_HOOK_TEST_DIR/scripts/setup/check-staged.sh")"
-  assert_equal "staged contents" "$output"
-  cleanup_staged_hook_test
-  trap - EXIT
-}
-
-test_staged_hook_uses_index_config() {
-  local output
-  STAGED_HOOK_TEST_DIR="$(mktemp -d "$ROOT_DIR/.staged-hook-test.XXXXXX")"
-  trap cleanup_staged_hook_test EXIT
-  setup_staged_hook_fixture "$STAGED_HOOK_TEST_DIR"
-  prepare_staged_hook_config_source "$STAGED_HOOK_TEST_DIR"
-  output="$(env -i PATH="$PATH" TEST_LINTER_BIN="$ROOT_DIR/bin/shellcheck-legibility" "$STAGED_HOOK_TEST_DIR/scripts/setup/check-staged.sh" 2>&1)" || fail "fallback config should disable LEG041: $output"
-  [[ "$output" != *"LEG041"* ]] || fail "fallback config unexpectedly enabled LEG041: $output"
-  stage_staged_hook_config "$STAGED_HOOK_TEST_DIR"
-  if output="$(env -i PATH="$PATH" TEST_LINTER_BIN="$ROOT_DIR/bin/shellcheck-legibility" "$STAGED_HOOK_TEST_DIR/scripts/setup/check-staged.sh" 2>&1)"; then
-    fail "expected staged config to report LEG041"
-  fi
-  [[ "$output" == *"LEG041"* ]] || fail "expected staged config to enable LEG041: $output"
-  cleanup_staged_hook_test
-  trap - EXIT
-}
-
-setup_staged_hook_fixture() {
-  local dir="${1:-}"
-  mkdir -p "$dir/scripts/setup" "$dir/bin"
-  cp "$ROOT_DIR/scripts/setup/check-staged.sh" "$dir/scripts/setup/check-staged.sh"
-  write_staged_hook_linter "$dir/bin/shellcheck-legibility"
-  chmod +x "$dir/bin/shellcheck-legibility"
-  isolated_test_git -C "$dir" init -q
-  isolated_test_git -C "$dir" config user.name "Unit Test"
-  isolated_test_git -C "$dir" config user.email "unit-test@example.invalid"
-}
-
-isolated_test_git() {
-  env -i PATH="$PATH" git "$@"
-}
-
-write_staged_hook_linter() {
-  local path="${1:-}"
-  cat > "$path" << 'STUB'
-#!/usr/bin/env bash
-set -euo pipefail
-if [[ -n "${TEST_LINTER_BIN:-}" ]]; then
-  exec "$TEST_LINTER_BIN" "$@"
-fi
-[[ "${1:-}" == "check" ]]
-shift
-for file in "$@"; do
-  cat "$file"
-done
-STUB
-}
-
-prepare_staged_hook_file() {
-  local dir="${1:-}" file="${2:-}"
-  mkdir -p "$(dirname "$dir/$file")"
-  printf '%s\n' "staged contents" > "$dir/$file"
-  isolated_test_git -C "$dir" add -- "$file"
-  printf '%s\n' "unstaged contents" > "$dir/$file"
-}
-
-prepare_staged_hook_config_source() {
-  local dir="${1:-}"
-  printf '%s\n' 'select: [LEG001]' > "$dir/.shellcheck-legibility.yml"
-  printf '%s\n' '#!/usr/bin/env bash' '# ordinary comment' 'printf ok' > "$dir/config-check.sh"
-  isolated_test_git -C "$dir" add -- config-check.sh
-}
-
-stage_staged_hook_config() {
-  local dir="${1:-}"
-  printf '%s\n' 'select: [LEG041]' > "$dir/.shellcheck-legibility.yml"
-  isolated_test_git -C "$dir" add -- .shellcheck-legibility.yml
-  printf '%s\n' 'select: [LEG001]' > "$dir/.shellcheck-legibility.yml"
-}
-
-cleanup_staged_hook_test() {
-  [[ -z "$STAGED_HOOK_TEST_DIR" ]] || rm -rf -- "$STAGED_HOOK_TEST_DIR"
-  STAGED_HOOK_TEST_DIR=""
 }
 
 test_config_formats() {
@@ -140,7 +50,7 @@ test_config_fixture() {
   local expected_max="${3:-}"
   local dir path resolved
   reset_test_state
-  dir="$ROOT_DIR/tests/fixtures/config/$format"
+  dir="$ROOT_DIR/internal/bash/testdata/$format"
   path="$dir/$filename"
   resolved="$(config_in_dir "$dir")"
   assert_equal "$path" "$resolved"
@@ -152,7 +62,7 @@ test_config_fixture() {
 test_yaml_config_list_values() {
   local path
   reset_test_state
-  path="$ROOT_DIR/tests/fixtures/config/yaml/.shellcheck-legibility.yml"
+  path="$ROOT_DIR/internal/bash/testdata/yaml/.shellcheck-legibility.yml"
   read_config_file "$path"
   assert_equal "4" "${#COMMENT_MATCHERS[@]}"
   assert_equal '^ticket,[0-9]+$' "${COMMENT_MATCHERS[0]}"
@@ -164,7 +74,7 @@ test_yaml_config_list_values() {
 test_inline_yaml_list_values() {
   local path
   reset_test_state
-  path="$ROOT_DIR/tests/fixtures/config/yaml/inline-lists.yml"
+  path="$ROOT_DIR/internal/bash/testdata/yaml/inline-lists.yml"
   read_config_file "$path"
   assert_equal "6" "${#COMMENT_MATCHERS[@]}"
   assert_equal '^foo,(bar|baz)$' "${COMMENT_MATCHERS[0]}"
@@ -206,7 +116,7 @@ test_selected_line_rule_skips_other_analysis() {
 test_file_rule_skips_source_scan() {
   reset_test_state
   SELECT=("LEG025")
-  lint_file "$ROOT_DIR/tests/unit/rules.bash"
+  lint_file "$ROOT_DIR/internal/bash/rules_test.bash"
   assert_equal "0" "$SCAN_LINE_NUMBER"
 }
 
@@ -1167,9 +1077,8 @@ test_shell_operators_still_reported() {
   SELECT=("LEG001" "LEG002")
   MAX_EXPRESSION_OPERATORS=0
   MAX_CONDITION_OPERATORS=0
-  scan_fixture 'value="$(first && second)"'
+  scan_fixture 'value="$(first && second)"' 'if ! ready; then' 'work' 'fi'
   assert_has_code "LEG001"
-  scan_fixture 'if ! ready; then' 'work' 'fi'
   assert_has_code "LEG002"
 }
 
@@ -1274,6 +1183,39 @@ test_function_structural_state_is_restored() {
   assert_equal "0" "$CONTROL_FLOW_DEPTH"
   assert_equal "0" "$IF_DEPTH"
   assert_has_code "LEG039"
+}
+
+test_scanner_fast_path_regressions() {
+  test_escaped_quotes_keep_literal_arguments
+  test_unclosed_escaped_quote_keeps_multiline_state
+  test_ascii_case_conversion
+}
+
+test_escaped_quotes_keep_literal_arguments() {
+  reset_test_state
+  SELECT=("LEG035")
+  local ansi="printf '%s\n' \$'can\\'t true' false"
+  scan_fixture 'run() {' 'printf "%s\n" "escaped \" true" false' "$ansi" '}'
+  assert_equal "2" "${#DIAG_CODES[@]}"
+  assert_equal "2" "${DIAG_LINES[0]}"
+  assert_equal "3" "${DIAG_LINES[1]}"
+}
+
+test_unclosed_escaped_quote_keeps_multiline_state() {
+  reset_test_state
+  SELECT=("LEG035")
+  scan_fixture 'run() {' 'printf "escaped \" true' 'still literal false"' 'create_user true' '}'
+  assert_equal "1" "${#DIAG_CODES[@]}"
+  assert_equal "4" "${DIAG_LINES[0]}"
+}
+
+test_ascii_case_conversion() {
+  local input output expected
+  for input in 'Hello WORLD' '!NOTE: Case' 'École' $'Hello\tWORLD'; do
+    expected="$(lowercase "$input")"
+    lowercase_into output "$input"
+    assert_equal "$expected" "$output"
+  done
 }
 
 main "$@"
