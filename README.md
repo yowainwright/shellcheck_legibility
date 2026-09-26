@@ -649,7 +649,7 @@ make check
 
 ## Publishing
 
-Push a `vMAJOR.MINOR.PATCH` tag to validate and publish the release. The workflow also opens a Homebrew formula pull request.
+Push a `vMAJOR.MINOR.PATCH` tag to validate and publish the release. The workflow also updates Homebrew after its formula validation passes.
 
 ---
 

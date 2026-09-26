@@ -1,22 +1,15 @@
 name: Release
-run-name: Release ${{ inputs.tag || github.ref_name }}
 
 on:
   push:
     tags:
-      - 'v*'
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: Release tag to publish or resume (vMAJOR.MINOR.PATCH)
-        required: true
-        type: string
+      - "v*"
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ inputs.tag || github.ref_name }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -24,185 +17,24 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    env:
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-
     steps:
-      - name: Validate release tag
-        run: |
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Expected a vMAJOR.MINOR.PATCH release tag."
-            exit 1
-          fi
-
-      - name: Require tap token
-        env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
-        run: |
-          if [[ -z "$GH_TOKEN" ]]; then
-            echo "::error::Configure HOMEBREW_TAP_GITHUB_TOKEN before releasing."
-            exit 1
-          fi
-          gh api --silent repos/yowainwright/homebrew-tap/git/ref/heads/main
-
-      - name: Check out workflow tools
+      - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Install tools
         uses: ./.github/actions/setup-shell
 
-      - name: Resolve release source
-        id: source
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          REF=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$RELEASE_TAG" |
-            jq -r --arg tag "$RELEASE_TAG" '.[] | select(.ref == "refs/tags/" + $tag) | .ref')
-          if [[ -z "$REF" ]]; then
-            echo "::error::Release tag $RELEASE_TAG does not exist."
-            exit 1
-          fi
-          echo "ref=$REF" >> "$GITHUB_OUTPUT"
-
-      - name: Check out release source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ steps.source.outputs.ref }}
-          persist-credentials: false
-
-      - name: Validate source
+      - name: Validate
         run: make check
 
-      - name: Package release assets
-        run: |
-          VERSION="${RELEASE_TAG#v}"
-          mkdir -p dist
-          for target in darwin-arm64 darwin-amd64 linux-arm64 linux-amd64; do
-            ./scripts/package-release \
-              "$VERSION" \
-              "$target" \
-              "dist/shellcheck-legibility-$target.tar.gz"
-          done
-
-      - name: Publish GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if RELEASE=$(gh release view "$RELEASE_TAG" --json isDraft,url); then
-            IS_DRAFT=$(jq -r '.isDraft' <<< "$RELEASE")
-          else
-            gh release create "$RELEASE_TAG" --verify-tag --generate-notes --draft
-            IS_DRAFT=true
-          fi
-          if [[ "$IS_DRAFT" == "true" ]]; then
-            for archive in dist/*.tar.gz; do
-              gh release upload "$RELEASE_TAG" "$archive" --clobber
-            done
-            gh release edit "$RELEASE_TAG" --draft=false
-          else
-            RELEASE_ASSETS=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")
-            for archive in dist/*.tar.gz; do
-              ARCHIVE_NAME=${archive##*/}
-              EXPECTED_DIGEST="sha256:$(sha256sum "$archive" | cut -d' ' -f1)"
-              ASSET=$(jq -c --arg name "$ARCHIVE_NAME" \
-                '[.assets[] | select(.name == $name)][0] // empty' <<< "$RELEASE_ASSETS")
-              if [[ -z "$ASSET" ]]; then
-                gh release upload "$RELEASE_TAG" "$archive"
-                continue
-              fi
-              ACTUAL_DIGEST=$(jq -r '.digest // empty' <<< "$ASSET")
-              if [[ "$ACTUAL_DIGEST" != "$EXPECTED_DIGEST" ]]; then
-                echo "::error::Published release asset $ARCHIVE_NAME differs from the rebuilt archive; refusing to replace public assets."
-                exit 1
-              fi
-            done
-          fi
-          RELEASE_URL=$(gh release view "$RELEASE_TAG" --json url --jq .url)
-          printf 'Release: %s\n' "$RELEASE_URL" >> "$GITHUB_STEP_SUMMARY"
-
-  homebrew:
-    name: Open Homebrew formula PR
-    needs: release
-    runs-on: macos-latest
-    env:
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-    steps:
-      - name: Verify published release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Expected a vMAJOR.MINOR.PATCH release tag."
-            exit 1
-          fi
-          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,assets |
-            jq -e '.isDraft == false and
-              ([.assets[] | select(.size > 0) | .name] |
-                contains(["shellcheck-legibility-darwin-arm64.tar.gz",
-                  "shellcheck-legibility-darwin-amd64.tar.gz",
-                  "shellcheck-legibility-linux-arm64.tar.gz",
-                  "shellcheck-legibility-linux-amd64.tar.gz"]))' >/dev/null
-
-      - name: Verify tap access
-        env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
-        run: |
-          test -n "$GH_TOKEN"
-          gh api --silent repos/yowainwright/homebrew-tap/git/ref/heads/main
-
-      - name: Check out Homebrew tap
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Release
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94
         with:
-          repository: yowainwright/homebrew-tap
-          token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
-          ref: main
-          persist-credentials: false
-          path: homebrew-tap
-
-      - name: Set up tap Ruby
-        run: |
-          brew list ruby >/dev/null 2>&1 || brew install ruby
-          echo "$(brew --prefix ruby)/bin" >> "$GITHUB_PATH"
-
-      - name: Update Homebrew formula
-        working-directory: homebrew-tap
-        run: |
-          scripts/update-formula shellcheck-legibility "${RELEASE_TAG#v}"
-          scripts/validate-tap --strict
-
-      - name: Open Homebrew formula pull request
-        id: tap
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1
-        with:
-          token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
-          path: homebrew-tap
-          add-paths: |
-            Formula/shellcheck-legibility.rb
-            brews/shellcheck-legibility.json
-          base: main
-          branch: shellcheck-legibility-${{ env.RELEASE_TAG }}
-          commit-message: "shellcheck-legibility ${{ env.RELEASE_TAG }}"
-          title: "shellcheck-legibility ${{ env.RELEASE_TAG }}"
-          body: |
-            Update the Homebrew formula to the published shellcheck-legibility release.
-
-            Release: https://github.com/yowainwright/shellcheck_legibility/releases/tag/${{ env.RELEASE_TAG }}
-
-            Generated from the published archives by the tap's shared scripts/update-formula.
-            Merge after the tap's required validation passes.
-
-      - name: Summarize installation status
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
         env:
-          TAP_PR_URL: ${{ steps.tap.outputs.pull-request-url }}
-        run: |
-          {
-            echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG"
-            if [[ -n "$TAP_PR_URL" ]]; then
-              echo "Homebrew PR: $TAP_PR_URL"
-              echo "Merge the PR after its checks pass to make this version available through Homebrew."
-            else
-              echo "The Homebrew formula already matches this release."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          GITHUB_TOKEN: ${{ github.token }}

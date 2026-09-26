@@ -1,0 +1,47 @@
+version: 2
+
+project_name: shellcheck-legibility
+
+before:
+  hooks:
+    - go mod download
+    - bash scripts/package-licenses .build/release-licenses
+
+builds:
+  - main: ./cmd/shellcheck-legibility
+    binary: shellcheck-legibility
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+      - -buildvcs=false
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"
+    files:
+      - LICENSE
+      - src: .build/release-licenses/*
+        dst: LICENSES
+        strip_parent: true
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  github:
+    owner: yowainwright
+    name: shellcheck_legibility
+  draft: false
+  prerelease: auto
+
+changelog:
+  sort: asc
