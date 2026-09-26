@@ -30,6 +30,14 @@ jobs:
       - name: Validate
         run: make check
 
+      - name: Verify Homebrew tap access
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          test -n "$GH_TOKEN"
+          gh api repos/yowainwright/homebrew-tap --jq '.permissions.push' | grep -qx true
+
       - name: Release
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94
         with:
@@ -38,3 +46,56 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ github.token }}
+
+  homebrew:
+    name: Update Homebrew
+    needs: release
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: macos-latest
+    concurrency:
+      group: homebrew-shellcheck-legibility
+      cancel-in-progress: false
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: yowainwright/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          ref: main
+          persist-credentials: false
+
+      - name: Set up tap Ruby
+        run: |
+          brew list ruby >/dev/null 2>&1 || brew install ruby
+          echo "$(brew --prefix ruby)/bin" >> "$GITHUB_PATH"
+
+      - name: Update formula
+        run: |
+          scripts/update-formula shellcheck-legibility "${RELEASE_TAG#v}"
+          scripts/validate-tap --strict
+
+      - name: Open Homebrew pull request
+        id: tap
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1
+        with:
+          token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          add-paths: |
+            Formula/shellcheck-legibility.rb
+            brews/shellcheck-legibility.json
+          base: main
+          branch: shellcheck-legibility
+          commit-message: "shellcheck-legibility ${{ github.ref_name }}"
+          title: "shellcheck-legibility ${{ github.ref_name }}"
+          body: |
+            Update shellcheck-legibility using the tap's scripts/update-formula.
+
+            Release: https://github.com/yowainwright/shellcheck_legibility/releases/tag/${{ github.ref_name }}
+
+      - name: Enable auto-merge after required checks
+        if: steps.tap.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          TAP_PR: ${{ steps.tap.outputs.pull-request-number }}
+        run: gh pr merge "$TAP_PR" --repo yowainwright/homebrew-tap --auto --squash
