@@ -52,6 +52,9 @@ jobs:
     needs: release
     if: ${{ !contains(github.ref_name, '-') }}
     runs-on: macos-latest
+    concurrency:
+      group: homebrew-shellcheck-legibility
+      cancel-in-progress: false
     env:
       RELEASE_TAG: ${{ github.ref_name }}
     steps:
@@ -82,7 +85,7 @@ jobs:
             Formula/shellcheck-legibility.rb
             brews/shellcheck-legibility.json
           base: main
-          branch: shellcheck-legibility-${{ github.ref_name }}
+          branch: shellcheck-legibility
           commit-message: "shellcheck-legibility ${{ github.ref_name }}"
           title: "shellcheck-legibility ${{ github.ref_name }}"
           body: |
