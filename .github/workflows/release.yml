@@ -96,11 +96,23 @@ jobs:
             gh release create "$RELEASE_TAG" --verify-tag --generate-notes --draft
             IS_DRAFT=true
           fi
-          for archive in dist/*.tar.gz; do
-            gh release upload "$RELEASE_TAG" "$archive" --clobber
-          done
           if [[ "$IS_DRAFT" == "true" ]]; then
+            for archive in dist/*.tar.gz; do
+              gh release upload "$RELEASE_TAG" "$archive" --clobber
+            done
             gh release edit "$RELEASE_TAG" --draft=false
+          else
+            RELEASE_ASSETS=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")
+            for archive in dist/*.tar.gz; do
+              ARCHIVE_NAME=${archive##*/}
+              EXPECTED_DIGEST="sha256:$(sha256sum "$archive" | cut -d' ' -f1)"
+              ACTUAL_DIGEST=$(jq -r --arg name "$ARCHIVE_NAME" \
+                '[.assets[] | select(.name == $name) | .digest][0] // empty' <<< "$RELEASE_ASSETS")
+              if [[ "$ACTUAL_DIGEST" != "$EXPECTED_DIGEST" ]]; then
+                echo "::error::Published release asset $ARCHIVE_NAME differs from the rebuilt archive; refusing to replace public assets."
+                exit 1
+              fi
+            done
           fi
           RELEASE_URL=$(gh release view "$RELEASE_TAG" --json url --jq .url)
           printf 'Release: %s\n' "$RELEASE_URL" >> "$GITHUB_STEP_SUMMARY"

@@ -1,33 +1,16 @@
 package bash
 
 import (
-	"bytes"
 	"embed"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
-
-	"github.com/yowainwright/shellcheck_legibility/internal/lint"
 )
 
 //go:embed defaults.bash util.bash rules.bash config.bash cli.bash files.bash cache.bash lint.bash output.bash
 var sources embed.FS
-
-func Check(args []string, version string) ([]lint.Diagnostic, error) {
-	var stdout, stderr bytes.Buffer
-	status := Run(args, &stdout, &stderr, version)
-	if status != 0 && status != 1 {
-		return nil, fmt.Errorf("Bash compatibility check: %s", strings.TrimSpace(stderr.String()))
-	}
-	var diagnostics []lint.Diagnostic
-	if err := json.Unmarshal(stdout.Bytes(), &diagnostics); err != nil {
-		return nil, fmt.Errorf("Bash compatibility output: %w", err)
-	}
-	return diagnostics, nil
-}
 
 func Run(args []string, stdout, stderr io.Writer, version string) int {
 	command, err := newCommand(args, version)

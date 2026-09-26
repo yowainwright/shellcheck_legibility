@@ -19,7 +19,7 @@ Shell legibility checks that sit beside ShellCheck.
 
 ShellCheck should own correctness, portability, quoting, and shell semantics. This project focuses on reviewability: control-flow depth, operator-heavy expressions, long functions, function-first script shape, defaulted function args, repeated comparisons, direct shell smoke tests, and patterns that make scripts harder to scan.
 
-Releases include a native Go engine using [mvdan's shell parser](https://github.com/mvdan/sh). Bash remains the compatibility scanner for incomplete or unsupported shell syntax. ShellCheck is a development lint dependency, not a runtime dependency.
+Releases include a native Go engine using [mvdan's shell parser](https://github.com/mvdan/sh). Set `SHELLCHECK_LEGIBILITY_ENGINE=bash` to opt into the Bash compatibility engine; that mode requires Bash. ShellCheck is a development lint dependency, not a runtime dependency.
 
 ## Install
 
@@ -36,7 +36,7 @@ Enable the cache in the shell that starts your agent. Existing lint hooks inheri
 export SHELLCHECK_LEGIBILITY_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/shellcheck-legibility"
 ```
 
-Unchanged files replay their diagnostics and exit status. File content, rule settings, paths, and engine changes invalidate cached results. Editing a file replaces its native cache entry; changing settings or the engine creates a separate entry. Cache entries contain data, never executable shell code. If caching is unavailable, checks still run. Files requiring the Bash compatibility scanner are rescanned each time.
+Unchanged files replay their diagnostics and exit status. File content, rule settings, paths, and engine changes invalidate cached results. Editing a file replaces its native cache entry; changing settings or the engine creates a separate entry. Cache entries contain data, never executable shell code. If caching is unavailable, checks still run.
 
 Use `--cache` for individual invocations or `--no-cache` for a full rescan. This caches shellcheck-legibility; ShellCheck remains a separate correctness check.
 

@@ -117,10 +117,8 @@ func (o *cliOptions) enableCache() {
 	o.CacheDir = filepath.Join(root, "shellcheck-legibility")
 }
 
-type fallbackScanner func(string, cliOptions) ([]lint.Diagnostic, error)
-
-func runCLI(args []string, stdout, stderr io.Writer, version string, fallback fallbackScanner) int {
-	status, err := run(args, stdout, version, fallback)
+func runCLI(args []string, stdout, stderr io.Writer, version string) int {
+	status, err := run(args, stdout, version)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
@@ -128,7 +126,7 @@ func runCLI(args []string, stdout, stderr io.Writer, version string, fallback fa
 	return status
 }
 
-func run(args []string, stdout io.Writer, version string, fallback fallbackScanner) (int, error) {
+func run(args []string, stdout io.Writer, version string) (int, error) {
 	options, err := parseOptions(args)
 	if err != nil {
 		return 2, err
@@ -141,10 +139,10 @@ func run(args []string, stdout io.Writer, version string, fallback fallbackScann
 		usage(stdout)
 		return 0, nil
 	}
-	return runCheck(options, stdout, fallback)
+	return runCheck(options, stdout)
 }
 
-func runCheck(options cliOptions, stdout io.Writer, fallback fallbackScanner) (int, error) {
+func runCheck(options cliOptions, stdout io.Writer) (int, error) {
 	config, err := loadConfig(&options)
 	if err != nil {
 		return 2, err
@@ -153,7 +151,7 @@ func runCheck(options cliOptions, stdout io.Writer, fallback fallbackScanner) (i
 	if err != nil {
 		return 2, err
 	}
-	findings, err := checkPaths(paths, options, config, fallback)
+	findings, err := checkPaths(paths, options, config)
 	writeErr := writeDiagnostics(stdout, findings, options.Format)
 	if err != nil {
 		return 2, errors.Join(err, writeErr)
@@ -171,12 +169,12 @@ func usage(writer io.Writer) {
 	fmt.Fprintln(writer, "  SHELLCHECK_LEGIBILITY_CACHE_DIR sets and enables the session cache.")
 }
 
-func checkPaths(paths []string, options cliOptions, config lint.Config, fallback fallbackScanner) ([]lint.Diagnostic, error) {
+func checkPaths(paths []string, options cliOptions, config lint.Config) ([]lint.Diagnostic, error) {
 	cache := newCache(options.CacheDir, config)
 	findings := []lint.Diagnostic{}
 	var failures []error
 	for _, path := range paths {
-		result, err := checkFile(path, options, config, fallback, cache)
+		result, err := checkFile(path, config, cache)
 		findings = append(findings, result...)
 		if err != nil {
 			failures = append(failures, fmt.Errorf("%s: %w", path, err))
@@ -186,7 +184,7 @@ func checkPaths(paths []string, options cliOptions, config lint.Config, fallback
 	return findings, errors.Join(failures...)
 }
 
-func checkFile(path string, options cliOptions, config lint.Config, fallback fallbackScanner, cache resultCache) ([]lint.Diagnostic, error) {
+func checkFile(path string, config lint.Config, cache resultCache) ([]lint.Diagnostic, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -196,13 +194,6 @@ func checkFile(path string, options cliOptions, config lint.Config, fallback fal
 		return saved, nil
 	}
 	result, scanErr := lint.Scan(path, data, config)
-	if scanErr != nil && fallback != nil {
-		compatibilityResult, fallbackErr := fallback(path, options)
-		if fallbackErr == nil {
-			return compatibilityResult, nil
-		}
-		return result, errors.Join(scanErr, fallbackErr)
-	}
 	if scanErr == nil {
 		cache.write(key, data, result)
 	}

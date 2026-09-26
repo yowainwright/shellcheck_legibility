@@ -52,6 +52,6 @@ func writeTestFile(t *testing.T, path, content string) {
 
 func runTestCLI(args []string) (int, string) {
 	var output bytes.Buffer
-	status := runCLI(args, &output, &output, "test", nil)
+	status := runCLI(args, &output, &output, "test")
 	return status, output.String()
 }

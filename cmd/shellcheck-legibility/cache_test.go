@@ -13,15 +13,14 @@ func TestMalformedSourceIsNeverCached(t *testing.T) {
 	t.Chdir(dir)
 	writeTestFile(t, "broken.sh", "unexpected)\n")
 	options := cliOptions{CacheDir: filepath.Join(dir, "cache")}
-	calls := 0
-	fallback := func(string, cliOptions) ([]lint.Diagnostic, error) { calls++; return nil, nil }
 	for range 2 {
-		if _, err := checkPaths([]string{"broken.sh"}, options, lint.DefaultConfig(), fallback); err != nil {
-			t.Fatal(err)
+		if _, err := checkPaths([]string{"broken.sh"}, options, lint.DefaultConfig()); err == nil {
+			t.Fatal("malformed source did not return an error")
 		}
 	}
-	if calls != 2 {
-		t.Fatalf("compatibility scanner called %d times", calls)
+	entries, err := os.ReadDir(options.CacheDir)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("malformed source was cached: %v, %v", entries, err)
 	}
 }
 
