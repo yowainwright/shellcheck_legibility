@@ -1,0 +1,152 @@
+#!/usr/bin/env ruby
+
+require "base64"
+require "json"
+require "open3"
+require "rubygems"
+
+class HomebrewRelease
+  TAP = "yowainwright/homebrew-tap"
+  UPSTREAM = "yowainwright/shellcheck_legibility"
+  PACKAGE = "shellcheck-legibility"
+  INVENTORY = "brews/#{PACKAGE}.json"
+  FORMULA = "Formula/#{PACKAGE}.rb"
+  TARGETS = %w[darwin-arm64 darwin-amd64 linux-arm64 linux-amd64].freeze
+  FAILED_CHECKS = %w[FAILURE ERROR TIMED_OUT CANCELLED ACTION_REQUIRED STARTUP_FAILURE].freeze
+  WAIT_SECONDS = 1800
+  POLL_SECONDS = 10
+
+  def initialize(tag)
+    @version = version(tag.delete_prefix("v"))
+  end
+
+  def version(value)
+    raise "Expected a stable MAJOR.MINOR.PATCH version: #{value}" unless value.match?(/\A(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)\z/)
+
+    Gem::Version.new(value)
+  end
+
+  def run(*command)
+    output, status = Open3.capture2(*command)
+    raise "Command failed: #{command.first(3).join(' ')}" unless status.success?
+
+    output
+  end
+
+  def api(path, *arguments)
+    JSON.parse(run("gh", "api", "--method", "GET", path, *arguments))
+  end
+
+  def tap_file(path, ref)
+    response = api("repos/#{TAP}/contents/#{path}", "-f", "ref=#{ref}")
+    Base64.decode64(response.fetch("content"))
+  end
+
+  def tap_version(ref)
+    version(JSON.parse(tap_file(INVENTORY, ref)).fetch("version"))
+  end
+
+  def pending_version
+    pulls = api("repos/#{TAP}/pulls", "-f", "state=open", "-f", "base=main",
+                "-f", "head=yowainwright:#{PACKAGE}")
+    return @version if pulls.empty?
+
+    tap_version(pulls.first.fetch("head").fetch("sha"))
+  end
+
+  def verify_release(target)
+    release = api("repos/#{UPSTREAM}/releases/tags/v#{target}")
+    raise "Release v#{target} is not a published stable release" if release.fetch("draft") || release.fetch("prerelease")
+
+    assets = release.fetch("assets").select { |asset| asset.fetch("size").positive? }
+    names = assets.map { |asset| asset.fetch("name") }
+    expected = TARGETS.map { |platform| "#{PACKAGE}-#{platform}.tar.gz" }
+    raise "Release v#{target} is missing archives" unless (expected - names).empty?
+  end
+
+  def output(values)
+    File.open(ENV.fetch("GITHUB_OUTPUT"), "a") do |file|
+      values.each { |key, value| file.puts "#{key}=#{value}" }
+    end
+  end
+
+  def prepare(directory)
+    current = tap_version("main")
+    if current >= @version
+      output("update" => false, "tag" => "v#{current}")
+      return
+    end
+
+    target = [@version, pending_version].max
+    verify_release(target)
+    run(File.join(directory, "scripts/update-formula"), PACKAGE, target.to_s)
+    run(File.join(directory, "scripts/validate-tap"), "--strict")
+    output("update" => true, "tag" => "v#{target}")
+  end
+
+  def pull_request(number)
+    fields = "state,headRefOid,mergeStateStatus,statusCheckRollup"
+    JSON.parse(run("gh", "pr", "view", number, "--repo", TAP, "--json", fields))
+  end
+
+  def failed_checks?(pull)
+    Array(pull["statusCheckRollup"]).any? do |check|
+      result = check["conclusion"] || check["state"]
+      FAILED_CHECKS.include?(result.to_s.upcase)
+    end
+  end
+
+  def advance_pull(number, pull)
+    raise "Tap PR ##{number} was closed without merging" if pull.fetch("state") == "CLOSED"
+    raise "Tap PR ##{number} has merge conflicts" if pull.fetch("mergeStateStatus") == "DIRTY"
+
+    head = pull.fetch("headRefOid")
+    if pull.fetch("mergeStateStatus") == "BEHIND"
+      run("gh", "pr", "update-branch", number, "--repo", TAP, "--expected-head-oid", head)
+      return
+    end
+    raise "Tap PR ##{number} failed validation" if failed_checks?(pull)
+    return if pull.fetch("mergeStateStatus") == "UNKNOWN"
+    return if @merge_requested == head
+
+    run("gh", "pr", "merge", number, "--repo", TAP, "--auto", "--squash", "--match-head-commit", head)
+    @merge_requested = head
+  end
+
+  def wait_for_merge(number)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + WAIT_SECONDS
+    loop do
+      pull = pull_request(number)
+      return if pull.fetch("state") == "MERGED"
+      raise "Timed out waiting for tap PR ##{number}" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+
+      advance_pull(number, pull)
+      sleep POLL_SECONDS
+    end
+  end
+
+  def verify_tap
+    head = api("repos/#{TAP}/git/ref/heads/main").fetch("object").fetch("sha")
+    current = tap_version(head)
+    raise "Tap is still on #{current}; expected at least #{@version}" if current < @version
+
+    formula = tap_file(FORMULA, head)
+    TARGETS.each do |platform|
+      url = "https://github.com/#{UPSTREAM}/releases/download/v#{current}/#{PACKAGE}-#{platform}.tar.gz"
+      raise "Tap formula does not match inventory #{current}" unless formula.include?("url \"#{url}\"")
+    end
+    puts "Homebrew published #{PACKAGE} #{current} (requested #{@version})"
+  end
+
+  def finish(number)
+    wait_for_merge(number) unless number.to_s.empty?
+    verify_tap
+  end
+end
+
+if $PROGRAM_NAME == __FILE__
+  operation, tag, argument = ARGV
+  abort "usage: homebrew-release prepare|finish TAG DIRECTORY_OR_PR" unless %w[prepare finish].include?(operation) && tag
+  release = HomebrewRelease.new(tag)
+  release.public_send(operation, argument)
+end
