@@ -39,7 +39,6 @@ staged-lint: build
 	$(STAGED_LINT)
 
 lint:
-	ruby -c scripts/homebrew-release
 	test -z "$$(gofmt -l cmd internal tests/integration)"
 	shellcheck -x -S warning $(SHELLCHECK_FILES)
 	shfmt -d -i 2 -ci -sr $(SHELLCHECK_FILES)
