@@ -33,6 +33,16 @@ jobs:
       - name: Validate
         run: make check
 
+      - name: Verify Homebrew release prerequisites
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          test -n "$GH_TOKEN"
+          gh api --method GET repos/yowainwright/homebrew-tap --jq '.permissions.push' | grep -qx true
+          gh api --method GET 'repos/yowainwright/homebrew-tap/contents/scripts/publish-formula?ref=main' >/dev/null
+
       - name: Release
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94
         with:
@@ -49,7 +59,7 @@ jobs:
       ${{ !cancelled() && !contains(github.ref_name, '-') &&
           (needs.release.result == 'success' ||
           (github.event_name == 'release' && !github.event.release.prerelease)) }}
-    uses: yowainwright/homebrew-tap/.github/workflows/publish-formula.yml@main
+    uses: yowainwright/homebrew-tap/.github/workflows/publish-formula.yml@70b8bea98cc6ae6f3eed17c32356e4dcc167ec5e
     with:
       package: shellcheck-legibility
       tag: ${{ github.event.release.tag_name || github.ref_name }}
